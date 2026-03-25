@@ -66,9 +66,11 @@
   .legend-items { display: flex; flex-wrap: wrap; gap: 6px; }
   .legend-item {
     display: flex; align-items: center; gap: 5px; font-size: 11px;
-    padding: 3px 8px; background: #f5f5f5; border-radius: 12px;
+    padding: 3px 8px; background: #f5f5f5; border-radius: 12px; cursor: pointer;
   }
-  .legend-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.15); }
+  .legend-item:hover { background: #e8e8e8; }
+  .legend-color-input { width: 0; height: 0; padding: 0; border: 0; position: absolute; opacity: 0; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.15); cursor: pointer; }
 
   /* Property list */
   .property-list-section { margin-top: 20px; border-top: 1px solid #eee; padding-top: 16px; }
@@ -192,31 +194,31 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// ── Color palette for property types ──
+// ── Color palette for property types (MetLife brand palette) ──
 const TYPE_COLORS = {
-  office:       '#4a90d9',
-  retail:       '#e74c3c',
-  industrial:   '#f39c12',
-  multifamily:  '#2ecc71',
-  residential:  '#2ecc71',
-  apartment:    '#2ecc71',
-  hotel:        '#9b59b6',
-  hospitality:  '#9b59b6',
-  medical:      '#1abc9c',
-  healthcare:   '#1abc9c',
-  'life science':'#1abc9c',
-  warehouse:    '#e67e22',
-  'self storage':'#95a5a6',
-  storage:      '#95a5a6',
-  'mixed use':  '#3498db',
-  'mixed-use':  '#3498db',
-  land:         '#8B7355',
-  parking:      '#7f8c8d',
-  flex:         '#d35400',
-  lab:          '#16a085',
-  'data center':'#2c3e50',
+  office:       '#0090DA',
+  retail:       '#A3CD4D',
+  industrial:   '#007ABC',
+  multifamily:  '#00AD51',
+  residential:  '#00AD51',
+  apartment:    '#00AD51',
+  hotel:        '#5B6770',
+  hospitality:  '#5B6770',
+  medical:      '#00B5E2',
+  healthcare:   '#00B5E2',
+  'life science':'#00B5E2',
+  warehouse:    '#007ABC',
+  'self storage':'#8C8F93',
+  storage:      '#8C8F93',
+  'mixed use':  '#0090DA',
+  'mixed-use':  '#0090DA',
+  land:         '#6CC24A',
+  parking:      '#5B6770',
+  flex:         '#007ABC',
+  lab:          '#00AD51',
+  'data center':'#00205B',
 };
-const FALLBACK_COLORS = ['#e056a0','#00bcd4','#8bc34a','#ff5722','#607d8b','#673ab7','#009688','#cddc39'];
+const FALLBACK_COLORS = ['#0090DA','#A3CD4D','#007ABC','#00AD51','#5B6770','#00B5E2','#6CC24A','#00205B'];
 let fallbackIdx = 0;
 const usedColors = {};
 
@@ -227,6 +229,12 @@ function getColor(type) {
   usedColors[key] = FALLBACK_COLORS[fallbackIdx % FALLBACK_COLORS.length];
   fallbackIdx++;
   return usedColors[key];
+}
+
+function setColor(type, color) {
+  const key = (type || 'other').toLowerCase().trim();
+  usedColors[key] = color;
+  renderMarkers();
 }
 
 // ── Tile layers ──
@@ -390,6 +398,33 @@ function computeRadii(props) {
   });
 }
 
+// ── Spread overlapping properties into a circle ──
+function spreadOverlaps(props) {
+  const OFFSET = 0.0003; // ~30m offset for overlapping points
+  const coords = props.map(p => ({ lat: p.lat, lon: p.lon }));
+  // Group by rounded coordinate key
+  const groups = {};
+  props.forEach((p, i) => {
+    if (p.lat == null || p.lon == null) return;
+    const key = `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(i);
+  });
+  // Spread groups with 2+ properties
+  for (const indices of Object.values(groups)) {
+    if (indices.length < 2) continue;
+    const n = indices.length;
+    indices.forEach((idx, j) => {
+      const angle = (2 * Math.PI * j) / n;
+      coords[idx] = {
+        lat: props[idx].lat + OFFSET * Math.cos(angle),
+        lon: props[idx].lon + OFFSET * Math.sin(angle),
+      };
+    });
+  }
+  return coords;
+}
+
 // ── Render markers ──
 function renderMarkers() {
   // Clear existing
@@ -401,14 +436,16 @@ function renderMarkers() {
   const radii = computeRadii(properties);
   const showLabels = document.getElementById('opt-labels').checked;
   const bounds = [];
+  const displayCoords = spreadOverlaps(properties);
 
   properties.forEach((p, i) => {
     if (p.lat == null || p.lon == null) return;
     const singleMode = document.getElementById('opt-color-mode').value === 'single';
     const color = singleMode ? document.getElementById('opt-single-color').value : getColor(p.type);
     const r = radii[i];
+    const pos = [displayCoords[i].lat, displayCoords[i].lon];
 
-    const circle = L.circleMarker([p.lat, p.lon], {
+    const circle = L.circleMarker(pos, {
       radius: r,
       fillColor: color,
       color: '#fff',
@@ -418,10 +455,10 @@ function renderMarkers() {
     }).addTo(map);
     circle.bindPopup(buildPopup(p));
     markers.push(circle);
-    bounds.push([p.lat, p.lon]);
+    bounds.push(pos);
 
     if (showLabels && p.name) {
-      const label = L.marker([p.lat, p.lon], {
+      const label = L.marker(pos, {
         icon: L.divIcon({
           className: '',
           html: `<div style="font-size:11px;font-weight:600;white-space:nowrap;color:#333;
@@ -447,7 +484,7 @@ function renderMarkers() {
   updatePropertyList();
 }
 
-// ── Legend ──
+// ── Legend (with per-type color pickers) ──
 function updateLegend() {
   const types = [...new Set(properties.map(p => (p.type || 'Other').trim()))];
   const section = document.getElementById('legend-section');
@@ -456,8 +493,21 @@ function updateLegend() {
   section.style.display = '';
   container.innerHTML = types.map(t => {
     const c = getColor(t);
-    return `<div class="legend-item"><div class="legend-dot" style="background:${c}"></div>${t}</div>`;
+    return `<div class="legend-item" data-type="${t}">
+      <div class="legend-dot" style="background:${c}"></div>${t}
+      <input type="color" class="legend-color-input" value="${c}" data-type="${t}">
+    </div>`;
   }).join('');
+  // Click legend item to open its color picker
+  container.querySelectorAll('.legend-item').forEach(item => {
+    const input = item.querySelector('.legend-color-input');
+    item.addEventListener('click', () => input.click());
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('input', (e) => {
+      const type = e.target.dataset.type;
+      setColor(type, e.target.value);
+    });
+  });
 }
 
 // ── Property list ──
