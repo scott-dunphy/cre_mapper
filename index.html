@@ -110,7 +110,7 @@
         <h2>Property Data</h2>
         <p class="hint">
           Paste rows from Excel with a header row. Recognized columns:<br>
-          <b>Name, Address, City, State, Zip, Type, SF, Lat, Lon, Units, Year Built, Notes</b><br>
+          <b>Name, Address, City, State, Zip, Type, SF, Lat, Lon, Units, Year Built, Market Value, Notes</b><br>
           <b>Lat and Lon columns are required</b> for plotting on the map.<br>
           <span style="color:#666;">Tip: Lat is positive in the Northern Hemisphere (e.g. US, Europe) and negative in the Southern (e.g. Australia). Lon is negative in the Western Hemisphere (e.g. Americas) and positive in the Eastern (e.g. Europe, Asia).</span>
         </p>
@@ -151,6 +151,7 @@
           <select id="opt-size">
             <option value="sf">Square Footage</option>
             <option value="units">Unit Count</option>
+            <option value="market_value">Market Value</option>
             <option value="fixed">Fixed Size</option>
           </select>
         </div>
@@ -305,6 +306,7 @@ function parseTabularData(text) {
     lon: ['lon', 'lng', 'longitude', 'long'],
     units: ['units', 'unit_count', 'num_units'],
     year_built: ['year_built', 'yearbuilt', 'built', 'vintage'],
+    market_value: ['market_value', 'marketvalue', 'value', 'price', 'sale_price', 'saleprice', 'asking_price'],
     notes: ['notes', 'comments', 'description'],
   };
 
@@ -345,6 +347,7 @@ function parseTabularData(text) {
       lon: toFloat(getVal(cols, 'lon')),
       units: toFloat(getVal(cols, 'units')),
       year_built: getVal(cols, 'year_built'),
+      market_value: toFloat(getVal(cols, 'market_value')),
       notes: getVal(cols, 'notes'),
     });
   }
@@ -361,6 +364,7 @@ function buildPopup(p) {
   if (p.sf) html += `<b>Size:</b> ${Number(p.sf).toLocaleString()} SF<br>`;
   if (p.units) html += `<b>Units:</b> ${Number(p.units).toLocaleString()}<br>`;
   if (p.year_built) html += `<b>Year Built:</b> ${p.year_built}<br>`;
+  if (p.market_value) html += `<b>Market Value:</b> $${Number(p.market_value).toLocaleString()}<br>`;
   if (p.notes) html += `<em>${p.notes}</em><br>`;
   html += `</div>`;
   return html;
