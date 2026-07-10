@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CRE Property Mapper</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
@@ -26,16 +27,46 @@
 
   .sidebar-body { flex: 1; overflow-y: auto; padding: 16px 20px; }
 
-  /* Paste area */
+  /* Mode toggle */
+  .mode-toggle { display: flex; gap: 0; margin-bottom: 16px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }
+  .mode-toggle button {
+    flex: 1; padding: 8px 10px; border: none; background: #fff; color: #555;
+    font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s;
+  }
+  .mode-toggle button.active { background: #1a1a2e; color: #fff; }
+  .mode-toggle button:not(.active):hover { background: #f0f0f0; }
+
+  /* Input table */
   .paste-section h2 { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
   .paste-section p.hint { font-size: 12px; color: #888; margin-bottom: 8px; line-height: 1.4; }
-  #paste-area {
-    width: 100%; height: 160px; font-family: 'SF Mono', 'Consolas', monospace;
-    font-size: 11px; padding: 10px; border: 2px dashed #ccc; border-radius: 8px;
-    resize: vertical; background: #fafafa; transition: border-color 0.2s;
+  .input-table-wrap {
+    max-height: 260px; overflow: auto; border: 1px solid #ddd; border-radius: 8px; background: #fff;
   }
-  #paste-area:focus { border-color: #4a90d9; outline: none; background: #fff; }
-  #paste-area.drag-over { border-color: #4a90d9; background: #eef4fc; }
+  table.input-table { border-collapse: collapse; font-size: 12px; }
+  .input-table th, .input-table td { border: 1px solid #eee; padding: 0; }
+  .input-table thead th { background: #f5f5f5; position: sticky; top: 0; z-index: 1; }
+  .input-table input[type="text"] {
+    width: 100%; min-width: 96px; border: none; padding: 6px 8px;
+    font-size: 12px; background: transparent; font-family: inherit;
+  }
+  .input-table input[type="text"]:focus { outline: 2px solid #4a90d9; outline-offset: -2px; background: #fff; }
+  .input-table thead .hdr-cell { display: flex; align-items: center; }
+  .input-table thead input[type="text"] { font-weight: 600; color: #333; background: transparent; }
+  .input-table .subject-col { width: 28px; min-width: 28px; text-align: center; background: #fff7e6; }
+  .input-table thead .subject-col { color: #b07000; font-size: 11px; }
+  .input-table .subject-col input { accent-color: #f5a623; cursor: pointer; }
+  .input-table .row-del-col { width: 24px; min-width: 24px; text-align: center; border: none; background: transparent; }
+  .col-del, .row-del {
+    border: none; background: none; color: #bbb; cursor: pointer;
+    font-size: 12px; padding: 2px 5px; line-height: 1;
+  }
+  .col-del:hover, .row-del:hover { color: #d33; }
+  .table-add-btns { display: flex; gap: 8px; margin-top: 6px; }
+  .table-add-btns button {
+    font-size: 11px; padding: 4px 10px; border: 1px dashed #ccc; background: #fafafa;
+    border-radius: 4px; cursor: pointer; color: #555;
+  }
+  .table-add-btns button:hover { background: #f0f0f0; border-color: #999; }
 
   .btn-row { display: flex; gap: 8px; margin-top: 10px; }
   .btn {
@@ -81,7 +112,9 @@
     border-left: 4px solid #ccc;
   }
   .prop-card:hover { background: #eef4fc; }
+  .prop-card.subject-card { background: #fff7e6; border-left-color: #f5a623; }
   .prop-card .prop-name { font-weight: 600; }
+  .prop-card .subject-tag { display: inline-block; margin-left: 6px; font-size: 10px; background: #f5a623; color: #fff; padding: 1px 6px; border-radius: 8px; vertical-align: middle; }
   .prop-card .prop-detail { color: #888; margin-top: 2px; }
 
   /* Status */
@@ -90,12 +123,109 @@
     border-top: 1px solid #eee; background: #fafafa;
   }
 
-  /* ── Map ── */
-  #map { flex: 1; }
+  /* ── Main area (map + table) ── */
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #map { flex: 1; min-height: 200px; }
+
+  /* Resize divider */
+  .divider {
+    height: 6px; background: #e5e5e5; cursor: row-resize; flex-shrink: 0;
+    border-top: 1px solid #ccc; border-bottom: 1px solid #ccc;
+    transition: background 0.15s;
+  }
+  .divider:hover, .divider.dragging { background: #4a90d9; }
+
+  /* Data table */
+  .table-container {
+    height: 280px; min-height: 80px; background: #fff;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .table-header {
+    padding: 8px 14px; background: #fafafa; border-bottom: 1px solid #eee;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 13px; font-weight: 600; color: #333; flex-shrink: 0;
+  }
+  .table-header .table-actions { display: flex; gap: 8px; }
+  .table-header button {
+    font-size: 11px; padding: 4px 10px; border: 1px solid #ddd; background: #fff;
+    border-radius: 4px; cursor: pointer; color: #555;
+  }
+  .table-header button:hover { background: #f0f0f0; }
+  .table-scroll { flex: 1; overflow: auto; }
+  table.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.data-table th, table.data-table td {
+    padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee;
+    white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis;
+  }
+  table.data-table thead th {
+    position: sticky; top: 0; background: #f5f5f5; font-weight: 600; color: #333;
+    border-bottom: 2px solid #ddd; z-index: 2; cursor: default;
+  }
+  table.data-table tbody tr { cursor: pointer; }
+  table.data-table tbody tr:hover { background: #eef4fc; }
+  table.data-table tbody tr.subject-row { background: #fff7e6; font-weight: 600; }
+  table.data-table tbody tr.subject-row:hover { background: #ffeccf; }
+  table.data-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .row-badge { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .row-subject-tag { display: inline-block; font-size: 9px; background: #f5a623; color: #fff; padding: 1px 5px; border-radius: 6px; margin-right: 6px; vertical-align: middle; }
 
   /* Tooltip */
   .prop-tooltip { font-size: 12px; line-height: 1.5; }
   .prop-tooltip strong { font-size: 13px; }
+  .prop-tooltip .subject-banner {
+    display: inline-block; font-size: 10px; background: #f5a623; color: #fff;
+    padding: 1px 6px; border-radius: 8px; margin-bottom: 4px;
+  }
+  .prop-tooltip table { margin-top: 4px; }
+  .prop-tooltip td { padding: 1px 6px 1px 0; vertical-align: top; }
+  .prop-tooltip td.label { color: #666; font-weight: 500; }
+
+  /* Subject star marker */
+  .subject-star {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%; color: #f5a623; font-size: 28px;
+    text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff;
+    position: relative;
+  }
+  .subject-star .subject-num {
+    position: absolute; color: #fff; font-size: 11px; font-weight: 700;
+    text-shadow: none; line-height: 1;
+  }
+
+  /* Numbered comp marker (divIcon) */
+  .comp-marker {
+    border-radius: 50%; border: 2px solid #fff; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    opacity: 0.92;
+  }
+
+  /* Number column styling */
+  td.num-col, th.num-col {
+    text-align: center; font-weight: 700; width: 36px; padding-left: 6px; padding-right: 6px;
+  }
+
+  /* ── Print styles ── */
+  @media print {
+    @page { size: landscape; margin: 0.4in; }
+    body { background: #fff; }
+    .sidebar, .divider, .table-header .table-actions { display: none !important; }
+    .app { display: block; height: auto; }
+    .main { display: block; height: auto; }
+    #map {
+      width: 100%; height: 4.8in !important; flex: none !important;
+      page-break-inside: avoid; border: 1px solid #ccc;
+    }
+    .table-container {
+      height: auto !important; min-height: 0 !important;
+      page-break-inside: auto; margin-top: 12px;
+    }
+    .table-scroll { overflow: visible !important; }
+    table.data-table { font-size: 10px; }
+    table.data-table thead th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    table.data-table tbody tr.subject-row { background: #fff7e6 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .leaflet-control-zoom, .leaflet-control-attribution { display: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -103,20 +233,36 @@
   <div class="sidebar">
     <div class="sidebar-header">
       <h1>CRE Property Mapper</h1>
-      <p>Paste data from Excel to plot properties on the map</p>
+      <p id="header-subtitle">Paste data from Excel to plot properties on the map</p>
     </div>
     <div class="sidebar-body">
 
-      <!-- Paste section -->
+      <!-- Mode toggle -->
+      <div class="mode-toggle" id="mode-toggle">
+        <button data-mode="portfolio" class="active">Portfolio</button>
+        <button data-mode="comps">Subject + Comps</button>
+      </div>
+
+      <!-- Data entry section -->
       <div class="paste-section">
         <h2>Property Data</h2>
-        <p class="hint">
-          Paste rows from Excel with a header row. Recognized columns:<br>
-          <b>Name, Address, City, State, Zip, Type, SF, Lat, Lon, Units, Year Built, Market Value, Notes</b><br>
-          <b>Lat and Lon columns are required</b> for plotting on the map.<br>
-          <span style="color:#666;">Tip: Lat is positive in the Northern Hemisphere (e.g. US, Europe) and negative in the Southern (e.g. Australia). Lon is negative in the Western Hemisphere (e.g. Americas) and positive in the Eastern (e.g. Europe, Asia).</span>
+        <p class="hint" id="paste-hint">
+          Type into the table below, or click a cell and paste a range straight from Excel —
+          a pasted block that includes a header row sets the columns automatically.<br>
+          <b>Required:</b> Property Name, Property Type, and either an <b>Address</b> (City/State/Zip help accuracy) or <b>Lat + Lon</b> columns.
+          Addresses are geocoded automatically (free, no API key). Extra columns show up in tooltips and the table.<br>
+          <span id="subject-hint" style="display:none;color:#b07000;">In Subject + Comps mode, tick the <b>S</b> checkbox on the subject row.</span>
         </p>
-        <textarea id="paste-area" placeholder="Name&#9;Address&#9;City&#9;State&#9;Zip&#9;Type&#9;SF&#9;Lat&#9;Lon&#10;Main Street Office&#9;100 Main St&#9;Boston&#9;MA&#9;02101&#9;Office&#9;50000&#9;42.3601&#9;-71.0589&#10;Harbor Retail&#9;200 Harbor Dr&#9;Boston&#9;MA&#9;02109&#9;Retail&#9;25000&#9;42.3611&#9;-71.0502"></textarea>
+        <div class="input-table-wrap">
+          <table class="input-table" id="input-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="table-add-btns">
+          <button id="btn-add-row">+ Add Row</button>
+          <button id="btn-add-col">+ Add Column</button>
+        </div>
         <div class="btn-row">
           <button class="btn btn-primary" id="btn-plot">Plot on Map</button>
           <button class="btn btn-secondary" id="btn-clear">Clear All</button>
@@ -151,10 +297,7 @@
         <div class="option-group">
           <label>Bubble Size Based On</label>
           <select id="opt-size">
-            <option value="sf">Square Footage</option>
-            <option value="units">Unit Count</option>
-            <option value="market_value">Market Value</option>
-            <option value="fixed">Fixed Size</option>
+            <option value="__fixed__">Fixed Size</option>
           </select>
         </div>
         <div class="option-group">
@@ -189,7 +332,27 @@
     </div>
     <div id="status">Ready &mdash; paste your data and click "Plot on Map"</div>
   </div>
-  <div id="map"></div>
+  <div class="main">
+    <div id="map"></div>
+    <div class="divider" id="divider"></div>
+    <div class="table-container" id="table-container">
+      <div class="table-header">
+        <div><span id="table-title">Properties</span> <span style="color:#888;font-weight:400;">(<span id="table-count">0</span>)</span></div>
+        <div class="table-actions">
+          <button id="btn-copy-table">Copy</button>
+          <button id="btn-download-csv">Download CSV</button>
+          <button id="btn-save-png">Save PNG</button>
+          <button id="btn-print">Print</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table" id="data-table">
+          <thead><tr><th style="padding:20px;color:#999;font-weight:400;">No data yet. Paste properties and click "Plot on Map".</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -282,100 +445,195 @@ function switchTiles(key) {
 
 let markers = [];
 let labelMarkers = [];
-let properties = [];
+let properties = [];       // array of { name, type, lat, lon, isSubject, extras: {label: value}, _raw }
+let extraFields = [];      // ordered list of extra field labels (union across rows, in first-seen order)
+let numericFields = [];    // subset of extraFields that parse as numeric across most rows
+let mode = 'portfolio';    // 'portfolio' | 'comps'
 
 // ── Status helper ──
 function setStatus(msg) { document.getElementById('status').textContent = msg; }
 
-// ── Client-side tabular data parser ──
+// ── Field normalization ──
+function normalizeHeader(h) {
+  return h.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+function humanizeHeader(h) {
+  return h.trim().replace(/\s+/g, ' ');
+}
+
+const REQUIRED_ALIASES = {
+  name:    ['name', 'property', 'property_name', 'propertyname', 'prop_name'],
+  type:    ['type', 'property_type', 'propertytype', 'asset_type', 'assettype', 'use'],
+  lat:     ['lat', 'latitude'],
+  lon:     ['lon', 'lng', 'longitude', 'long'],
+  subject: ['subject', 'is_subject', 'issubject', 'subject_y_n', 'subject_flag'],
+};
+
+// Address-related columns stay in extras (still shown in tooltips/table);
+// they're only used to build a geocoding query when Lat/Lon are missing.
+const ADDRESS_ALIASES = {
+  address: ['address', 'street_address', 'street', 'addr', 'property_address', 'full_address', 'location'],
+  city:    ['city', 'town', 'municipality'],
+  state:   ['state', 'st', 'province'],
+  zip:     ['zip', 'zip_code', 'zipcode', 'postal_code', 'postal'],
+};
+
+function toFloat(s) {
+  if (s == null) return null;
+  const cleaned = String(s).replace(/[$,\s]/g, '').replace(/%$/, '');
+  if (cleaned === '' || cleaned === '-') return null;
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? null : n;
+}
+
+function isTruthyFlag(s) {
+  if (s == null) return false;
+  const v = String(s).trim().toLowerCase();
+  return ['y', 'yes', 'true', '1', 'x', 'subject'].includes(v);
+}
+
+// ── Parser: requires Name/Type/Lat/Lon; all other columns captured as extras ──
 function parseTabularData(text) {
   text = text.trim();
-  if (!text) return [];
+  if (!text) return { properties: [], extraFields: [], errors: ['No data pasted.'] };
 
-  const lines = text.split('\n').map(l => l.trimEnd());
-  // Detect delimiter from header row
+  const lines = text.split('\n').map(l => l.replace(/\r$/, ''));
   const delimiter = lines[0].includes('\t') ? '\t' : ',';
 
-  // Parse header
-  const headers = lines[0].split(delimiter).map(h =>
-    h.trim().toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/^_+|_+$/g, '')
-  );
+  const rawHeaders = lines[0].split(delimiter).map(h => h.trim());
+  const normalized = rawHeaders.map(normalizeHeader);
 
-  // Column alias lookup
-  const ALIASES = {
-    name: ['name', 'property', 'property_name', 'propertyname'],
-    address: ['address', 'street', 'street_address'],
-    city: ['city'],
-    state: ['state', 'st'],
-    zip: ['zip', 'zipcode', 'zip_code', 'postal'],
-    type: ['type', 'property_type', 'propertytype', 'asset_type', 'assettype', 'use'],
-    sf: ['sf', 'sqft', 'sq_ft', 'square_feet', 'squarefeet', 'size', 'nra', 'gla'],
-    lat: ['lat', 'latitude'],
-    lon: ['lon', 'lng', 'longitude', 'long'],
-    units: ['units', 'unit_count', 'num_units'],
-    year_built: ['year_built', 'yearbuilt', 'built', 'vintage'],
-    market_value: ['market_value', 'marketvalue', 'value', 'price', 'sale_price', 'saleprice', 'asking_price'],
-    notes: ['notes', 'comments', 'description'],
-  };
-
-  // Map each field to its column index
-  const colIndex = {};
-  for (const [field, aliases] of Object.entries(ALIASES)) {
+  // Resolve required field positions
+  const colIdx = {};
+  for (const [field, aliases] of Object.entries(REQUIRED_ALIASES)) {
     for (const alias of aliases) {
-      const idx = headers.indexOf(alias);
-      if (idx !== -1) { colIndex[field] = idx; break; }
+      const idx = normalized.indexOf(alias);
+      if (idx !== -1) { colIdx[field] = idx; break; }
     }
   }
 
-  function getVal(cols, field) {
-    const idx = colIndex[field];
-    if (idx == null || idx >= cols.length) return '';
-    return (cols[idx] || '').trim();
-  }
-  function toFloat(s) {
-    if (!s) return null;
-    s = s.replace(/,/g, '').replace(/ /g, '');
-    const n = parseFloat(s);
-    return isNaN(n) ? null : n;
+  // Resolve address column positions (not removed from extras)
+  const addrIdx = {};
+  for (const [field, aliases] of Object.entries(ADDRESS_ALIASES)) {
+    for (const alias of aliases) {
+      const idx = normalized.indexOf(alias);
+      if (idx !== -1) { addrIdx[field] = idx; break; }
+    }
   }
 
+  // Validate required fields: Name + Type always; then Lat+Lon OR an Address column
+  const missing = ['name', 'type'].filter(f => colIdx[f] == null);
+  const hasCoords = colIdx.lat != null && colIdx.lon != null;
+  const hasAddress = addrIdx.address != null;
+  if (missing.length > 0 || (!hasCoords && !hasAddress)) {
+    const label = { name: 'Property Name', type: 'Property Type' };
+    const parts = missing.map(m => label[m]);
+    if (!hasCoords && !hasAddress) parts.push('Lat + Lon (or an Address column)');
+    return { properties: [], extraFields: [], errors: [`Missing required column(s): ${parts.join(', ')}`] };
+  }
+
+  // Extra column indices: everything not claimed by a required field
+  const claimed = new Set(Object.values(colIdx));
+  const extras = []; // [{ idx, label }]
+  rawHeaders.forEach((raw, i) => {
+    if (claimed.has(i)) return;
+    if (!raw.trim()) return;
+    extras.push({ idx: i, label: humanizeHeader(raw) });
+  });
+
   const results = [];
+  const errors = [];
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
     const cols = lines[i].split(delimiter);
+    const getCol = (idx) => (idx == null || idx >= cols.length) ? '' : (cols[idx] || '').trim();
+
+    const latN = toFloat(getCol(colIdx.lat));
+    const lonN = toFloat(getCol(colIdx.lon));
+
+    // No coordinates? Build a geocoding query from Address (+ City/State/Zip if present).
+    let geocodeQuery = null;
+    if (latN == null || lonN == null) {
+      const queryParts = [getCol(addrIdx.address), getCol(addrIdx.city), getCol(addrIdx.state), getCol(addrIdx.zip)];
+      geocodeQuery = queryParts.filter(Boolean).join(', ');
+      if (!geocodeQuery) {
+        errors.push(`Row ${i + 1}: no Lat/Lon and no address — skipped.`);
+        continue;
+      }
+    }
+
+    const extraVals = {};
+    extras.forEach(e => { extraVals[e.label] = getCol(e.idx); });
+
     results.push({
-      name: getVal(cols, 'name'),
-      address: getVal(cols, 'address'),
-      city: getVal(cols, 'city'),
-      state: getVal(cols, 'state'),
-      zip: getVal(cols, 'zip'),
-      type: getVal(cols, 'type'),
-      sf: toFloat(getVal(cols, 'sf')),
-      lat: toFloat(getVal(cols, 'lat')),
-      lon: toFloat(getVal(cols, 'lon')),
-      units: toFloat(getVal(cols, 'units')),
-      year_built: getVal(cols, 'year_built'),
-      market_value: toFloat(getVal(cols, 'market_value')),
-      notes: getVal(cols, 'notes'),
+      name: getCol(colIdx.name) || `Row ${i}`,
+      type: getCol(colIdx.type) || 'Other',
+      lat: latN != null && lonN != null ? latN : null,
+      lon: latN != null && lonN != null ? lonN : null,
+      geocodeQuery,
+      isSubject: colIdx.subject != null ? isTruthyFlag(getCol(colIdx.subject)) : false,
+      extras: extraVals,
     });
   }
-  return results;
+
+  return { properties: results, extraFields: extras.map(e => e.label), errors };
+}
+
+// ── Detect numeric-looking fields for "Size by" dropdown ──
+function detectNumericFields(props, fields) {
+  const numeric = [];
+  for (const f of fields) {
+    let numCount = 0, nonEmpty = 0;
+    for (const p of props) {
+      const v = p.extras[f];
+      if (v === '' || v == null) continue;
+      nonEmpty++;
+      if (toFloat(v) != null) numCount++;
+    }
+    if (nonEmpty > 0 && numCount / nonEmpty >= 0.6) numeric.push(f);
+  }
+  return numeric;
+}
+
+// ── Format a value for display (currency, percent, large numbers, etc.) ──
+function formatValue(raw) {
+  if (raw === '' || raw == null) return '';
+  const s = String(raw).trim();
+  // Currency
+  if (/^\$\s*-?[\d,]+(\.\d+)?$/.test(s)) {
+    const n = toFloat(s);
+    return n == null ? s : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  }
+  // Percent
+  if (/^-?[\d,.]+%$/.test(s)) return s;
+  // Plain numbers — but leave leading-zero codes (zips) alone
+  if (/^-?[\d,]+(\.\d+)?$/.test(s) && !/^0\d/.test(s)) {
+    const n = toFloat(s);
+    return n == null ? s : n.toLocaleString();
+  }
+  return s;
 }
 
 // ── Build popup content ──
 function buildPopup(p) {
   let html = `<div class="prop-tooltip">`;
-  html += `<strong>${p.name || 'Unnamed Property'}</strong><br>`;
-  if (p.address) html += `${p.address}<br>`;
-  if (p.city || p.state || p.zip) html += `${[p.city, p.state].filter(Boolean).join(', ')} ${p.zip || ''}<br>`;
-  if (p.type) html += `<b>Type:</b> ${p.type}<br>`;
-  if (p.sf) html += `<b>Size:</b> ${Number(p.sf).toLocaleString()} SF<br>`;
-  if (p.units) html += `<b>Units:</b> ${Number(p.units).toLocaleString()}<br>`;
-  if (p.year_built) html += `<b>Year Built:</b> ${p.year_built}<br>`;
-  if (p.market_value) html += `<b>Market Value:</b> $${Number(p.market_value).toLocaleString()}<br>`;
-  if (p.notes) html += `<em>${p.notes}</em><br>`;
+  if (p.isSubject) html += `<div class="subject-banner">SUBJECT</div><br>`;
+  html += `<strong>${escapeHtml(p.name)}</strong><br>`;
+  html += `<span style="color:#666;">${escapeHtml(p.type)}</span>`;
+  const rows = [];
+  for (const f of extraFields) {
+    const v = p.extras[f];
+    if (v === '' || v == null) continue;
+    rows.push(`<tr><td class="label">${escapeHtml(f)}</td><td>${escapeHtml(formatValue(v))}</td></tr>`);
+  }
+  if (rows.length) html += `<table>${rows.join('')}</table>`;
   html += `</div>`;
   return html;
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 // ── Compute radius ──
@@ -384,11 +642,13 @@ function computeRadii(props) {
   const minR = parseInt(document.getElementById('opt-min-r').value) || 8;
   const maxR = parseInt(document.getElementById('opt-max-r').value) || 40;
 
-  if (sizeField === 'fixed') return props.map(() => (minR + maxR) / 2);
+  if (sizeField === '__fixed__') return props.map(() => (minR + maxR) / 2);
 
-  const values = props.map(p => p[sizeField] || 0);
-  const minVal = Math.min(...values.filter(v => v > 0));
-  const maxVal = Math.max(...values);
+  const values = props.map(p => toFloat(p.extras[sizeField]) || 0);
+  const positives = values.filter(v => v > 0);
+  if (positives.length === 0) return props.map(() => minR);
+  const minVal = Math.min(...positives);
+  const maxVal = Math.max(...positives);
   const range = maxVal - minVal || 1;
 
   return values.map(v => {
@@ -400,9 +660,8 @@ function computeRadii(props) {
 
 // ── Spread overlapping properties into a circle ──
 function spreadOverlaps(props) {
-  const OFFSET = 0.0003; // ~30m offset for overlapping points
+  const OFFSET = 0.0003;
   const coords = props.map(p => ({ lat: p.lat, lon: p.lon }));
-  // Group by rounded coordinate key
   const groups = {};
   props.forEach((p, i) => {
     if (p.lat == null || p.lon == null) return;
@@ -410,7 +669,6 @@ function spreadOverlaps(props) {
     if (!groups[key]) groups[key] = [];
     groups[key].push(i);
   });
-  // Spread groups with 2+ properties
   for (const indices of Object.values(groups)) {
     if (indices.length < 2) continue;
     const n = indices.length;
@@ -427,7 +685,6 @@ function spreadOverlaps(props) {
 
 // ── Render markers ──
 function renderMarkers() {
-  // Clear existing
   markers.forEach(m => map.removeLayer(m));
   labelMarkers.forEach(m => map.removeLayer(m));
   markers = [];
@@ -437,33 +694,70 @@ function renderMarkers() {
   const showLabels = document.getElementById('opt-labels').checked;
   const bounds = [];
   const displayCoords = spreadOverlaps(properties);
+  const singleMode = document.getElementById('opt-color-mode').value === 'single';
+
+  // In comps mode, assign a number to each comp (1..N) in data order; subject gets no number (shown as ★/S).
+  const compNumbers = {};
+  if (mode === 'comps') {
+    let n = 1;
+    properties.forEach((p, idx) => { if (!p.isSubject) compNumbers[idx] = n++; });
+  }
 
   properties.forEach((p, i) => {
     if (p.lat == null || p.lon == null) return;
-    const singleMode = document.getElementById('opt-color-mode').value === 'single';
     const color = singleMode ? document.getElementById('opt-single-color').value : getColor(p.type);
     const r = radii[i];
     const pos = [displayCoords[i].lat, displayCoords[i].lon];
 
-    const circle = L.circleMarker(pos, {
-      radius: r,
-      fillColor: color,
-      color: '#fff',
-      weight: 2,
-      opacity: 1,
-      fillOpacity: 0.7,
-    }).addTo(map);
-    circle.bindPopup(buildPopup(p));
-    markers.push(circle);
+    let marker;
+    if (p.isSubject) {
+      const size = Math.max(r * 2.2, 36);
+      marker = L.marker(pos, {
+        icon: L.divIcon({
+          className: '',
+          html: `<div class="subject-star" style="width:${size}px;height:${size}px;">★<span class="subject-num">S</span></div>`,
+          iconSize: [size, size],
+          iconAnchor: [size / 2, size / 2],
+        }),
+        zIndexOffset: 1000,
+      }).addTo(map);
+    } else if (mode === 'comps') {
+      // Numbered circle via divIcon so we can center the number inside it.
+      const d = Math.max(r * 2, 22);
+      const fontSize = d >= 34 ? 13 : (d >= 26 ? 12 : 11);
+      marker = L.marker(pos, {
+        icon: L.divIcon({
+          className: '',
+          html: `<div class="comp-marker" style="width:${d}px;height:${d}px;background:${color};font-size:${fontSize}px;">${compNumbers[i]}</div>`,
+          iconSize: [d, d],
+          iconAnchor: [d / 2, d / 2],
+        }),
+      }).addTo(map);
+    } else {
+      marker = L.circleMarker(pos, {
+        radius: r,
+        fillColor: color,
+        color: '#fff',
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.7,
+      }).addTo(map);
+    }
+    marker.bindPopup(buildPopup(p));
+    markers.push(marker);
     bounds.push(pos);
 
     if (showLabels && p.name) {
+      const labelOffsetY = p.isSubject ? -22 : -(mode === 'comps' ? Math.max(r, 11) + 4 : r + 8);
+      const nameHtml = p.isSubject
+        ? `<b style="color:#b07000;">${escapeHtml(p.name)}</b>`
+        : escapeHtml(p.name);
       const label = L.marker(pos, {
         icon: L.divIcon({
           className: '',
           html: `<div style="font-size:11px;font-weight:600;white-space:nowrap;color:#333;
                   text-shadow:1px 1px 2px #fff,-1px -1px 2px #fff,1px -1px 2px #fff,-1px 1px 2px #fff;
-                  pointer-events:none;transform:translateY(${-r - 8}px);">${p.name}</div>`,
+                  pointer-events:none;transform:translateY(${labelOffsetY}px);">${nameHtml}</div>`,
           iconSize: [0, 0],
           iconAnchor: [0, 0],
         }),
@@ -473,34 +767,39 @@ function renderMarkers() {
     }
   });
 
-  // Fit bounds
-  if (document.getElementById('opt-cluster').checked && bounds.length > 0) {
-    map.fitBounds(bounds, { padding: [40, 40] });
-  } else if (bounds.length > 0) {
+  // Expose for table to consume
+  renderMarkers._compNumbers = compNumbers;
+
+  if (bounds.length > 0) {
     map.fitBounds(bounds, { padding: [40, 40] });
   }
 
   updateLegend();
   updatePropertyList();
+  updateDataTable();
 }
 
-// ── Legend (with per-type color pickers) ──
+// ── Legend ──
 function updateLegend() {
   const types = [...new Set(properties.map(p => (p.type || 'Other').trim()))];
   const section = document.getElementById('legend-section');
   const container = document.getElementById('legend-items');
   if (types.length === 0) { section.style.display = 'none'; return; }
   section.style.display = '';
-  container.innerHTML = types.map(t => {
+  const subjectItem = mode === 'comps' && properties.some(p => p.isSubject)
+    ? `<div class="legend-item" style="background:#fff7e6;border:1px solid #f5a623;">
+        <span style="color:#f5a623;font-size:14px;line-height:1;">★</span> Subject
+       </div>` : '';
+  container.innerHTML = subjectItem + types.map(t => {
     const c = getColor(t);
-    return `<div class="legend-item" data-type="${t}">
-      <div class="legend-dot" style="background:${c}"></div>${t}
-      <input type="color" class="legend-color-input" value="${c}" data-type="${t}">
+    return `<div class="legend-item" data-type="${escapeHtml(t)}">
+      <div class="legend-dot" style="background:${c}"></div>${escapeHtml(t)}
+      <input type="color" class="legend-color-input" value="${c}" data-type="${escapeHtml(t)}">
     </div>`;
   }).join('');
-  // Click legend item to open its color picker
-  container.querySelectorAll('.legend-item').forEach(item => {
+  container.querySelectorAll('.legend-item[data-type]').forEach(item => {
     const input = item.querySelector('.legend-color-input');
+    if (!input) return;
     item.addEventListener('click', () => input.click());
     input.addEventListener('click', (e) => e.stopPropagation());
     input.addEventListener('input', (e) => {
@@ -510,7 +809,7 @@ function updateLegend() {
   });
 }
 
-// ── Property list ──
+// ── Sidebar property list ──
 function updatePropertyList() {
   const section = document.getElementById('prop-list-section');
   const container = document.getElementById('prop-list');
@@ -518,12 +817,28 @@ function updatePropertyList() {
   if (properties.length === 0) { section.style.display = 'none'; return; }
   section.style.display = '';
   const singleMode = document.getElementById('opt-color-mode').value === 'single';
-  container.innerHTML = properties.map((p, i) => {
+
+  // Subject first in comps mode
+  const ordered = mode === 'comps'
+    ? [...properties].sort((a, b) => (b.isSubject ? 1 : 0) - (a.isSubject ? 1 : 0))
+    : properties;
+
+  const compNumbers = renderMarkers._compNumbers || {};
+  container.innerHTML = ordered.map(p => {
+    const origIdx = properties.indexOf(p);
     const color = singleMode ? document.getElementById('opt-single-color').value : getColor(p.type);
-    const detail = [p.type, p.sf ? `${Number(p.sf).toLocaleString()} SF` : '', p.city].filter(Boolean).join(' | ');
-    return `<div class="prop-card" style="border-left-color:${color}" data-idx="${i}">
-      <div class="prop-name">${p.name || 'Unnamed'}</div>
-      <div class="prop-detail">${detail}</div>
+    const snippetParts = [p.type];
+    for (const f of extraFields) {
+      const v = p.extras[f];
+      if (v) { snippetParts.push(`${f}: ${formatValue(v)}`); break; }
+    }
+    const numPrefix = mode === 'comps'
+      ? (p.isSubject ? '<b style="color:#b07000;">S</b> &middot; ' : `<b>${compNumbers[origIdx] || ''}</b> &middot; `)
+      : '';
+    const subjectTag = p.isSubject ? `<span class="subject-tag">SUBJECT</span>` : '';
+    return `<div class="prop-card ${p.isSubject ? 'subject-card' : ''}" style="border-left-color:${p.isSubject ? '#f5a623' : color}" data-idx="${origIdx}">
+      <div class="prop-name">${numPrefix}${escapeHtml(p.name)}${subjectTag}</div>
+      <div class="prop-detail">${escapeHtml(snippetParts.filter(Boolean).join(' | '))}</div>
     </div>`;
   }).join('');
 
@@ -531,7 +846,7 @@ function updatePropertyList() {
     card.addEventListener('click', () => {
       const idx = parseInt(card.dataset.idx);
       const p = properties[idx];
-      if (p.lat && p.lon) {
+      if (p.lat != null && p.lon != null) {
         map.setView([p.lat, p.lon], 16);
         if (markers[idx]) markers[idx].openPopup();
       }
@@ -539,40 +854,407 @@ function updatePropertyList() {
   });
 }
 
+// ── Bottom data table ──
+function updateDataTable() {
+  const table = document.getElementById('data-table');
+  document.getElementById('table-count').textContent = properties.length;
+  document.getElementById('table-title').textContent = mode === 'comps' ? 'Subject & Comps' : 'Properties';
+
+  if (properties.length === 0) {
+    table.querySelector('thead').innerHTML = `<tr><th style="padding:20px;color:#999;font-weight:400;">No data yet. Paste properties and click "Plot on Map".</th></tr>`;
+    table.querySelector('tbody').innerHTML = '';
+    return;
+  }
+
+  const singleMode = document.getElementById('opt-color-mode').value === 'single';
+
+  // Header columns: (# in comps mode), Name, Type, Lat, Lon, then all extras in first-seen order
+  const cols = [];
+  if (mode === 'comps') cols.push({ key: '__num__', label: '#' });
+  cols.push(
+    { key: '__name__', label: 'Property Name' },
+    { key: '__type__', label: 'Property Type' },
+    { key: '__lat__',  label: 'Lat' },
+    { key: '__lon__',  label: 'Lon' },
+    ...extraFields.map(f => ({ key: f, label: f })),
+  );
+
+  table.querySelector('thead').innerHTML =
+    `<tr>${cols.map(c => `<th${c.key === '__num__' ? ' class="num-col"' : ''}>${escapeHtml(c.label)}</th>`).join('')}</tr>`;
+
+  const compNumbers = renderMarkers._compNumbers || {};
+
+  // Rows: subject first in comps mode
+  const ordered = mode === 'comps'
+    ? [...properties].sort((a, b) => (b.isSubject ? 1 : 0) - (a.isSubject ? 1 : 0))
+    : properties;
+
+  table.querySelector('tbody').innerHTML = ordered.map(p => {
+    const origIdx = properties.indexOf(p);
+    const color = singleMode ? document.getElementById('opt-single-color').value : getColor(p.type);
+    const rowClass = p.isSubject ? 'subject-row' : '';
+    const subjectTag = p.isSubject ? `<span class="row-subject-tag">SUBJECT</span>` : '';
+    const nameCell = `<span class="row-badge" style="background:${p.isSubject ? '#f5a623' : color};"></span>${subjectTag}${escapeHtml(p.name)}`;
+    const cells = cols.map(c => {
+      if (c.key === '__num__')  return `<td class="num-col">${p.isSubject ? 'S' : (compNumbers[origIdx] || '')}</td>`;
+      if (c.key === '__name__') return `<td>${nameCell}</td>`;
+      if (c.key === '__type__') return `<td>${escapeHtml(p.type)}</td>`;
+      if (c.key === '__lat__')  return `<td class="num">${p.lat.toFixed(5)}</td>`;
+      if (c.key === '__lon__')  return `<td class="num">${p.lon.toFixed(5)}</td>`;
+      const v = p.extras[c.key];
+      const display = formatValue(v);
+      const isNum = v !== '' && v != null && toFloat(v) != null;
+      return `<td class="${isNum ? 'num' : ''}">${escapeHtml(display)}</td>`;
+    }).join('');
+    return `<tr class="${rowClass}" data-idx="${origIdx}">${cells}</tr>`;
+  }).join('');
+
+  table.querySelectorAll('tbody tr').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const idx = parseInt(tr.dataset.idx);
+      const p = properties[idx];
+      if (p.lat != null && p.lon != null) {
+        map.setView([p.lat, p.lon], 16);
+        if (markers[idx]) markers[idx].openPopup();
+      }
+    });
+  });
+}
+
+// ── Size-by dropdown: rebuild from numeric extras ──
+function rebuildSizeOptions() {
+  const sel = document.getElementById('opt-size');
+  const prev = sel.value;
+  const opts = ['<option value="__fixed__">Fixed Size</option>'];
+  for (const f of numericFields) {
+    opts.push(`<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`);
+  }
+  sel.innerHTML = opts.join('');
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  else sel.value = numericFields.length > 0 ? numericFields[0] : '__fixed__';
+}
+
+// ── CSV / copy helpers ──
+function buildCsv() {
+  if (properties.length === 0) return '';
+  const headers = ['Property Name', 'Property Type', 'Lat', 'Lon'];
+  if (mode === 'comps') headers.push('Subject');
+  headers.push(...extraFields);
+  const escCsv = (s) => {
+    const str = s == null ? '' : String(s);
+    return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+  };
+  const rows = [headers.map(escCsv).join(',')];
+  for (const p of properties) {
+    const row = [p.name, p.type, p.lat, p.lon];
+    if (mode === 'comps') row.push(p.isSubject ? 'Y' : '');
+    for (const f of extraFields) row.push(p.extras[f] || '');
+    rows.push(row.map(escCsv).join(','));
+  }
+  return rows.join('\n');
+}
+
+// ── Structured input table ──
+const DEFAULT_COLUMNS = ['Property Name', 'Property Type', 'Address', 'City', 'State', 'Zip'];
+let inputColumns = [...DEFAULT_COLUMNS];
+
+function emptyInputRow() {
+  return { subject: false, cells: inputColumns.map(() => '') };
+}
+
+// Read current grid state out of the DOM
+function getInputRows() {
+  const rows = [];
+  document.querySelectorAll('#input-table tbody tr').forEach(tr => {
+    const subjectBox = tr.querySelector('input[type="checkbox"]');
+    const cells = [...tr.querySelectorAll('input[type="text"]')].map(inp => inp.value);
+    rows.push({
+      subject: subjectBox ? subjectBox.checked : tr.dataset.subject === '1',
+      cells,
+    });
+  });
+  return rows;
+}
+
+function inputRowHtml(r, ri, showSubject) {
+  let tds = '';
+  if (showSubject) {
+    tds += `<td class="subject-col"><input type="checkbox" title="Mark as subject" ${r.subject ? 'checked' : ''}></td>`;
+  }
+  tds += r.cells.map((v, ci) => `<td><input type="text" value="${escapeHtml(v)}" data-col="${ci}"></td>`).join('');
+  tds += `<td class="row-del-col"><button class="row-del" title="Remove row" tabindex="-1">&times;</button></td>`;
+  return `<tr data-row="${ri}" data-subject="${r.subject ? '1' : '0'}">${tds}</tr>`;
+}
+
+function attachInputRowListeners(tr) {
+  tr.querySelectorAll('input[type="text"]').forEach(inp => {
+    inp.addEventListener('paste', handleCellPaste);
+    inp.addEventListener('input', () => {
+      // Typing in the last row auto-adds a fresh row below it
+      if (tr === tr.parentElement.lastElementChild && inp.value !== '') appendInputRow();
+    });
+  });
+  const cb = tr.querySelector('input[type="checkbox"]');
+  if (cb) cb.addEventListener('change', () => { tr.dataset.subject = cb.checked ? '1' : '0'; });
+  tr.querySelector('.row-del').addEventListener('click', () => {
+    const rows = getInputRows();
+    rows.splice(parseInt(tr.dataset.row), 1);
+    renderInputTable(rows);
+  });
+}
+
+function renderInputTable(rows) {
+  if (!rows || rows.length === 0) rows = [emptyInputRow()];
+  rows.forEach(r => {
+    while (r.cells.length < inputColumns.length) r.cells.push('');
+    r.cells.length = inputColumns.length;
+  });
+
+  const showSubject = mode === 'comps';
+  const table = document.getElementById('input-table');
+
+  let head = '<tr>';
+  if (showSubject) head += '<th class="subject-col" title="Subject row">S</th>';
+  head += inputColumns.map((c, i) =>
+    `<th><div class="hdr-cell"><input type="text" value="${escapeHtml(c)}" data-hcol="${i}"><button class="col-del" data-col="${i}" title="Remove column" tabindex="-1">&times;</button></div></th>`
+  ).join('');
+  head += '<th class="row-del-col"></th></tr>';
+  table.querySelector('thead').innerHTML = head;
+
+  table.querySelector('tbody').innerHTML = rows.map((r, ri) => inputRowHtml(r, ri, showSubject)).join('');
+
+  table.querySelectorAll('thead input[type="text"]').forEach(inp => {
+    inp.addEventListener('input', () => { inputColumns[parseInt(inp.dataset.hcol)] = inp.value; });
+  });
+  table.querySelectorAll('thead .col-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = parseInt(btn.dataset.col);
+      const cur = getInputRows();
+      inputColumns.splice(i, 1);
+      if (inputColumns.length === 0) inputColumns = ['Column 1'];
+      cur.forEach(r => r.cells.splice(i, 1));
+      renderInputTable(cur);
+    });
+  });
+  table.querySelectorAll('tbody tr').forEach(attachInputRowListeners);
+}
+
+function appendInputRow() {
+  const tbody = document.querySelector('#input-table tbody');
+  tbody.insertAdjacentHTML('beforeend', inputRowHtml(emptyInputRow(), tbody.children.length, mode === 'comps'));
+  attachInputRowListeners(tbody.lastElementChild);
+}
+
+// Paste into a cell: a multi-cell block spreads across the grid from that cell.
+// If the first pasted line looks like a header row, rebuild the whole table from the paste.
+function handleCellPaste(e) {
+  const text = (e.clipboardData || window.clipboardData).getData('text');
+  if (!text || (!text.includes('\t') && !text.includes('\n'))) return; // plain single-cell paste
+
+  e.preventDefault();
+  const grid = text.replace(/\r/g, '').split('\n').filter(l => l.trim() !== '').map(l => l.split('\t'));
+  if (grid.length === 0) return;
+
+  const knownHeaders = new Set([
+    ...Object.values(REQUIRED_ALIASES).flat(),
+    ...Object.values(ADDRESS_ALIASES).flat(),
+  ]);
+  const headerHits = grid[0].filter(c => knownHeaders.has(normalizeHeader(c))).length;
+
+  if (headerHits >= 2) {
+    // Treat first row as headers; a Subject column maps to the checkboxes
+    const subjIdx = grid[0].findIndex(h => REQUIRED_ALIASES.subject.includes(normalizeHeader(h)));
+    inputColumns = grid[0].filter((_, i) => i !== subjIdx).map(humanizeHeader);
+    const rows = grid.slice(1).map(cells => ({
+      subject: subjIdx !== -1 ? isTruthyFlag(cells[subjIdx]) : false,
+      cells: cells.filter((_, i) => i !== subjIdx).map(c => (c || '').trim()),
+    }));
+    renderInputTable(rows);
+    setStatus(`Pasted ${rows.length} row(s) with headers: ${inputColumns.join(', ')}.`);
+    return;
+  }
+
+  // No header row: fill cells starting at the focused cell
+  const startRow = parseInt(e.target.closest('tr').dataset.row);
+  const startCol = parseInt(e.target.dataset.col);
+  const rows = getInputRows();
+  grid.forEach((cells, r) => {
+    while (rows.length <= startRow + r) rows.push(emptyInputRow());
+    cells.forEach((v, c) => {
+      const ci = startCol + c;
+      while (inputColumns.length <= ci) inputColumns.push(`Column ${inputColumns.length + 1}`);
+      while (rows[startRow + r].cells.length < inputColumns.length) rows[startRow + r].cells.push('');
+      rows[startRow + r].cells[ci] = v.trim();
+    });
+  });
+  renderInputTable(rows);
+  setStatus(`Pasted ${grid.length} row(s).`);
+}
+
+// Serialize the grid to TSV (header row included) for the parser
+function tableToTsv() {
+  const rows = getInputRows().filter(r => r.cells.some(c => c.trim() !== ''));
+  if (rows.length === 0) return '';
+  const headers = [...inputColumns];
+  if (mode === 'comps') headers.push('Subject');
+  const lines = [headers.join('\t')];
+  for (const r of rows) {
+    const cells = [...r.cells];
+    if (mode === 'comps') cells.push(r.subject ? 'Y' : '');
+    lines.push(cells.join('\t'));
+  }
+  return lines.join('\n');
+}
+
+// ── Free geocoding: Nominatim/OSM (no key, 1 req/sec) → Photon fallback ──
+// Results are cached in localStorage so re-plotting the same data is instant.
+const geocodeCache = (() => {
+  try { return JSON.parse(localStorage.getItem('cre_geocode_cache') || '{}'); } catch { return {}; }
+})();
+function saveGeocodeCache() {
+  try { localStorage.setItem('cre_geocode_cache', JSON.stringify(geocodeCache)); } catch {}
+}
+
+let lastNominatimCall = 0;
+async function geocodeAddress(query) {
+  const key = query.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (geocodeCache[key]) return geocodeCache[key];
+
+  // 1. Nominatim (OpenStreetMap) — free, no key; usage policy caps at 1 req/sec
+  const wait = lastNominatimCall + 1100 - Date.now();
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  lastNominatimCall = Date.now();
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (data && data[0]) {
+      const result = { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+      geocodeCache[key] = result;
+      saveGeocodeCache();
+      return result;
+    }
+  } catch {}
+
+  // 2. Photon (komoot) fallback — also free, no key, OSM-based
+  try {
+    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=1`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    const coords = data?.features?.[0]?.geometry?.coordinates;
+    if (coords) {
+      const result = { lat: coords[1], lon: coords[0] };
+      geocodeCache[key] = result;
+      saveGeocodeCache();
+      return result;
+    }
+  } catch {}
+
+  return null;
+}
+
 // ── Main plot action ──
-function plotProperties() {
-  const raw = document.getElementById('paste-area').value.trim();
-  if (!raw) { setStatus('Paste some property data first.'); return; }
+let isGeocoding = false;
+async function plotProperties() {
+  if (isGeocoding) return;
+  const raw = tableToTsv();
+  if (!raw) { setStatus('Enter some property data first.'); return; }
 
   setStatus('Parsing data...');
-  const data = parseTabularData(raw);
+  const parsed = parseTabularData(raw);
 
-  if (data.length === 0) { setStatus('No valid rows found. Check your data format.'); return; }
+  if (parsed.errors && parsed.errors.length && parsed.properties.length === 0) {
+    setStatus(parsed.errors.join(' '));
+    return;
+  }
+  if (parsed.properties.length === 0) { setStatus('No valid rows found. Check your data format.'); return; }
 
-  properties = data;
+  // Geocode rows that came in with an address instead of coordinates
+  const pending = parsed.properties.filter(p => p.lat == null && p.geocodeQuery);
+  let geocodeFails = 0;
+  if (pending.length > 0) {
+    isGeocoding = true;
+    const btn = document.getElementById('btn-plot');
+    btn.disabled = true;
+    try {
+      for (let i = 0; i < pending.length; i++) {
+        setStatus(`Geocoding address ${i + 1} of ${pending.length}: ${pending[i].geocodeQuery}`);
+        const coords = await geocodeAddress(pending[i].geocodeQuery);
+        if (coords) {
+          pending[i].lat = coords.lat;
+          pending[i].lon = coords.lon;
+        } else {
+          geocodeFails++;
+          parsed.errors.push(`Could not geocode "${pending[i].geocodeQuery}" — skipped.`);
+        }
+      }
+    } finally {
+      isGeocoding = false;
+      btn.disabled = false;
+    }
+    parsed.properties = parsed.properties.filter(p => p.lat != null && p.lon != null);
+    if (parsed.properties.length === 0) {
+      setStatus('No addresses could be geocoded. Check the addresses or add Lat/Lon columns.');
+      return;
+    }
+  }
+
+  if (mode === 'comps' && !parsed.properties.some(p => p.isSubject)) {
+    setStatus('Subject + Comps mode: no row was marked as Subject. Add a "Subject" column with Y on the subject row.');
+  }
+
+  properties = parsed.properties;
+  extraFields = parsed.extraFields;
+  numericFields = detectNumericFields(properties, extraFields);
+  rebuildSizeOptions();
   renderMarkers();
 
-  const plotted = properties.filter(p => p.lat != null && p.lon != null).length;
-  const skipped = properties.length - plotted;
-  let msg = `Plotted ${plotted} of ${properties.length} properties.`;
-  if (skipped) msg += ` ${skipped} skipped (missing Lat/Lon).`;
+  const skipped = parsed.errors.length;
+  let msg = `Plotted ${properties.length} propert${properties.length === 1 ? 'y' : 'ies'}.`;
+  if (pending.length > geocodeFails) msg += ` Geocoded ${pending.length - geocodeFails} address(es).`;
+  if (skipped) msg += ` ${skipped} row(s) skipped (no coordinates or address not found).`;
+  if (mode === 'comps') {
+    const nSub = properties.filter(p => p.isSubject).length;
+    if (nSub > 0) msg += ` ${nSub} subject, ${properties.length - nSub} comps.`;
+  }
   setStatus(msg);
 }
 
-// ── Sample data ──
-const SAMPLE_DATA = `Name\tAddress\tCity\tState\tZip\tType\tSF\tUnits\tYear Built\tLat\tLon
-One Boston Wharf\t1 Boston Wharf Rd\tBoston\tMA\t02210\tOffice\t325000\t\t2019\t42.3472\t-71.0425
-Prudential Tower\t800 Boylston St\tBoston\tMA\t02199\tOffice\t1200000\t\t1964\t42.3471\t-71.0826
-Faneuil Hall Marketplace\t4 S Market St\tBoston\tMA\t02109\tRetail\t214000\t\t1826\t42.3601\t-71.0549
-Avalon North Station\t1 Avery St\tBoston\tMA\t02111\tMultifamily\t180000\t308\t2014\t42.3533\t-71.0627
-Boston Marriott Long Wharf\t296 State St\tBoston\tMA\t02109\tHotel\t72000\t\t1982\t42.3600\t-71.0475
-100 Federal Street\t100 Federal St\tBoston\tMA\t02110\tOffice\t975000\t\t1971\t42.3553\t-71.0565
-Arsenal Yards\t485 Arsenal St\tWatertown\tMA\t02472\tMixed Use\t800000\t\t2020\t42.3637\t-71.1645
-Ink Block\t300 Harrison Ave\tBoston\tMA\t02118\tMultifamily\t475000\t315\t2015\t42.3417\t-71.0666
-Boston Scientific HQ\t300 Boston Scientific Way\tMarlborough\tMA\t01752\tLife Science\t500000\t\t2000\t42.3460\t-71.5518
-South Bay Center\t7 Allstate Rd\tBoston\tMA\t02125\tRetail\t425000\t\t2018\t42.3298\t-71.0541
-CityPlace Burlington\t75 Middlesex Turnpike\tBurlington\tMA\t01803\tIndustrial\t220000\t\t1998\t42.4887\t-71.2030
-Four Seasons Boston\t200 Boylston St\tBoston\tMA\t02116\tHotel\t45000\t\t1985\t42.3519\t-71.0671`;
+// ── Sample data (addresses only — geocoded on plot) ──
+const SAMPLE_PORTFOLIO = {
+  columns: ['Property Name', 'Property Type', 'Address', 'City', 'State', 'Zip'],
+  rows: [
+    { subject: false, cells: ['One Boston Wharf', 'Office', '1 Boston Wharf Rd', 'Boston', 'MA', '02210'] },
+    { subject: false, cells: ['Prudential Tower', 'Office', '800 Boylston St', 'Boston', 'MA', '02199'] },
+  ],
+};
+
+const SAMPLE_COMPS = {
+  columns: ['Property Name', 'Property Type', 'Address', 'City', 'State', 'Sale Price', 'Cap Rate'],
+  rows: [
+    { subject: true,  cells: ['200 Clarendon', 'Office', '200 Clarendon St', 'Boston', 'MA', '', ''] },
+    { subject: false, cells: ['One Post Office Square', 'Office', '1 Post Office Sq', 'Boston', 'MA', '$785,000,000', '5.1%'] },
+    { subject: false, cells: ['100 Federal Street', 'Office', '100 Federal St', 'Boston', 'MA', '$720,000,000', '4.8%'] },
+  ],
+};
+
+// ── Mode switching ──
+function setMode(newMode) {
+  mode = newMode;
+  document.querySelectorAll('#mode-toggle button').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  document.getElementById('subject-hint').style.display = mode === 'comps' ? '' : 'none';
+  document.getElementById('header-subtitle').textContent = mode === 'comps'
+    ? 'Plot a subject and its sales comps'
+    : 'Enter or paste properties to plot them on the map';
+  renderInputTable(getInputRows()); // re-render to show/hide the Subject column
+  if (properties.length > 0) {
+    updatePropertyList();
+    updateDataTable();
+    updateLegend();
+  }
+}
 
 // ── Event listeners ──
 document.getElementById('btn-plot').addEventListener('click', plotProperties);
@@ -583,24 +1265,46 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   markers = [];
   labelMarkers = [];
   properties = [];
-  document.getElementById('paste-area').value = '';
+  extraFields = [];
+  numericFields = [];
+  rebuildSizeOptions();
+  inputColumns = [...DEFAULT_COLUMNS];
+  renderInputTable([emptyInputRow(), emptyInputRow(), emptyInputRow()]);
   Object.keys(usedColors).forEach(k => delete usedColors[k]);
   fallbackIdx = 0;
   updateLegend();
   updatePropertyList();
+  updateDataTable();
   map.setView([39.8283, -98.5795], 5);
   setStatus('Cleared. Ready for new data.');
 });
 
 document.getElementById('btn-sample').addEventListener('click', () => {
-  document.getElementById('paste-area').value = SAMPLE_DATA;
-  setStatus('Sample data loaded. Click "Plot on Map" to visualize.');
+  const sample = mode === 'comps' ? SAMPLE_COMPS : SAMPLE_PORTFOLIO;
+  inputColumns = [...sample.columns];
+  renderInputTable(sample.rows.map(r => ({ subject: r.subject, cells: [...r.cells] })));
+  setStatus('Sample data loaded. Click "Plot on Map" to geocode and visualize.');
 });
 
-// Tile layer switcher
+document.getElementById('btn-add-row').addEventListener('click', appendInputRow);
+document.getElementById('btn-add-col').addEventListener('click', () => {
+  const rows = getInputRows();
+  inputColumns.push(`Column ${inputColumns.length + 1}`);
+  renderInputTable(rows);
+  // Focus the new header, text selected, so the user can type its name right away
+  const headerInputs = document.querySelectorAll('#input-table thead input[type="text"]');
+  const newHeader = headerInputs[headerInputs.length - 1];
+  newHeader.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  newHeader.focus();
+  newHeader.select();
+});
+
+document.querySelectorAll('#mode-toggle button').forEach(btn => {
+  btn.addEventListener('click', () => setMode(btn.dataset.mode));
+});
+
 document.getElementById('opt-tiles').addEventListener('change', (e) => switchTiles(e.target.value));
 
-// Color mode toggle
 document.getElementById('opt-color-mode').addEventListener('change', (e) => {
   document.getElementById('single-color-group').style.display = e.target.value === 'single' ? '' : 'none';
   if (properties.length > 0) renderMarkers();
@@ -609,18 +1313,106 @@ document.getElementById('opt-single-color').addEventListener('input', () => {
   if (properties.length > 0) renderMarkers();
 });
 
-// Re-render when options change
 ['opt-size', 'opt-min-r', 'opt-max-r', 'opt-labels', 'opt-cluster'].forEach(id => {
   document.getElementById(id).addEventListener('change', () => {
     if (properties.length > 0) renderMarkers();
   });
 });
 
-// Drag over effect for paste area
-const pasteArea = document.getElementById('paste-area');
-pasteArea.addEventListener('dragover', (e) => { e.preventDefault(); pasteArea.classList.add('drag-over'); });
-pasteArea.addEventListener('dragleave', () => pasteArea.classList.remove('drag-over'));
-pasteArea.addEventListener('drop', () => pasteArea.classList.remove('drag-over'));
+// Table actions
+document.getElementById('btn-copy-table').addEventListener('click', async () => {
+  const csv = buildCsv();
+  if (!csv) { setStatus('No data to copy.'); return; }
+  try {
+    await navigator.clipboard.writeText(csv);
+    setStatus('Table copied to clipboard as CSV.');
+  } catch {
+    setStatus('Copy failed — browser blocked clipboard access.');
+  }
+});
+
+document.getElementById('btn-print').addEventListener('click', () => {
+  if (properties.length === 0) { setStatus('Nothing to print yet.'); return; }
+  window.print();
+});
+
+document.getElementById('btn-save-png').addEventListener('click', async () => {
+  if (properties.length === 0) { setStatus('Nothing to save yet.'); return; }
+  if (typeof html2canvas === 'undefined') { setStatus('PNG export unavailable (html2canvas failed to load).'); return; }
+  setStatus('Generating PNG...');
+  try {
+    const mapEl = document.getElementById('map');
+    const tableEl = document.getElementById('table-container');
+
+    const mapCanvas = await html2canvas(mapEl, { useCORS: true, allowTaint: true, backgroundColor: '#fff', scale: 2 });
+    const tableCanvas = await html2canvas(tableEl, { backgroundColor: '#fff', scale: 2 });
+
+    // Stack map on top of table into one combined canvas
+    const W = Math.max(mapCanvas.width, tableCanvas.width);
+    const H = mapCanvas.height + tableCanvas.height + 20;
+    const out = document.createElement('canvas');
+    out.width = W; out.height = H;
+    const ctx = out.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, W, H);
+    ctx.drawImage(mapCanvas, (W - mapCanvas.width) / 2, 0);
+    ctx.drawImage(tableCanvas, (W - tableCanvas.width) / 2, mapCanvas.height + 20);
+
+    const url = out.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${mode === 'comps' ? 'subject_comps' : 'properties'}_map.png`;
+    a.click();
+    setStatus('PNG saved.');
+  } catch (err) {
+    console.error(err);
+    setStatus('PNG export failed — try Print → Save as PDF instead.');
+  }
+});
+
+document.getElementById('btn-download-csv').addEventListener('click', () => {
+  const csv = buildCsv();
+  if (!csv) { setStatus('No data to download.'); return; }
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${mode === 'comps' ? 'subject_comps' : 'properties'}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ── Resizable divider between map and table ──
+(function setupDivider() {
+  const divider = document.getElementById('divider');
+  const tableContainer = document.getElementById('table-container');
+  let dragging = false;
+
+  divider.addEventListener('mousedown', (e) => {
+    dragging = true;
+    divider.classList.add('dragging');
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const mainRect = document.querySelector('.main').getBoundingClientRect();
+    const newHeight = Math.max(80, Math.min(mainRect.height - 120, mainRect.bottom - e.clientY));
+    tableContainer.style.height = `${newHeight}px`;
+    map.invalidateSize();
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    divider.classList.remove('dragging');
+    document.body.style.userSelect = '';
+  });
+})();
+
+// Initial setup
+setMode('portfolio');
+rebuildSizeOptions();
+renderInputTable([emptyInputRow(), emptyInputRow(), emptyInputRow()]);
 </script>
 </body>
 </html>
