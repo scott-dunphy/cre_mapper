@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Traffic Inspector</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #667085; --line: #e3e6ea;
+  --accent: #2f6fde; --accent-soft: #e8f0fd; --hit: #1f9d6b; --hit-soft: #e3f6ee; --warn: #b54708;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --c-claude: #c96442; --c-chatgpt: #10a37f; --c-grok: #444b55; --c-meta: #0866ff;
+  --c-gemini: #7b5cf0; --c-perplexity: #20808d; --c-other: #8a94a6;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111317; --panel: #1a1d23; --ink: #e8eaed; --muted: #98a2b3; --line: #2b3038;
+    --accent: #6c9cf0; --accent-soft: #1f2a3d; --hit: #45c18f; --hit-soft: #17322a; --c-grok: #b9c0ca; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+header { display: flex; align-items: center; gap: 16px; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+header h1 { font-size: 15px; margin: 0; font-weight: 650; }
+nav { display: flex; gap: 4px; }
+nav button { border: 0; background: none; padding: 6px 12px; border-radius: 6px; color: var(--muted); font: inherit; cursor: pointer; }
+nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.status { margin-left: auto; display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 13px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-other); display: inline-block; }
+.dot.live { background: var(--hit); box-shadow: 0 0 0 3px var(--hit-soft); }
+main { padding: 16px 18px; }
+.toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+input[type=search], select { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+input[type=search] { min-width: 240px; }
+button.btn { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.btn:disabled { opacity: .45; cursor: default; }
+button.btn.danger { color: #c4320a; }
+.split { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1000px) { .split { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.card h3 { margin: 0; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--line); color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+.card .body { padding: 12px 14px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--panel); position: sticky; top: 0; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--accent-soft); }
+tbody tr.sel { background: var(--accent-soft); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll { max-height: calc(100vh - 170px); overflow: auto; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; color: #fff; background: var(--c-other); white-space: nowrap; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.trunc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 2px 9px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-size: 12px; }
+.chip.q { background: #fff4e5; color: var(--warn); }
+@media (prefers-color-scheme: dark) { .chip.q { background: #3a2a14; } }
+pre { white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5 var(--mono); margin: 0; }
+.answer { white-space: pre-wrap; word-break: break-word; max-height: 420px; overflow: auto; }
+.src { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.src:last-child { border: 0; }
+.src a { color: var(--accent); text-decoration: none; word-break: break-all; }
+.dom { font-weight: 600; }
+.section { margin-bottom: 14px; }
+.section > .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 6px; font-weight: 600; }
+.cols { display: grid; gap: 12px; }
+.cols .card { min-width: 0; }
+.stat { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+.stat b { font-variant-numeric: tabular-nums; }
+.matrix td.cell { text-align: center; }
+.tick { display: inline-block; min-width: 22px; padding: 1px 6px; border-radius: 4px; background: var(--hit-soft); color: var(--hit); font-weight: 700; font-size: 12px; }
+.heat { text-align: center; font-variant-numeric: tabular-nums; }
+.group { padding: 10px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.group:hover { background: var(--accent-soft); }
+.empty { padding: 40px; text-align: center; color: var(--muted); }
+.kv { display: grid; grid-template-columns: 180px 1fr; gap: 2px 10px; font: 12px/1.5 var(--mono); }
+.kv div:nth-child(odd) { color: var(--muted); word-break: break-all; }
+.kv div:nth-child(even) { word-break: break-all; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin: 6px 0; }
+.hidden { display: none !important; }
+textarea { font: 12.5px/1.5 var(--mono); width: 100%; min-height: 70px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); resize: vertical; }
+input[type=url], input[type=text] { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); width: 100%; }
+.st { display:flex; gap:8px; align-items:center; padding:4px 0; font-size:13px; }
+.st .s { font-size:11px; font-weight:700; text-transform:uppercase; padding:1px 7px; border-radius:4px; background:var(--accent-soft); color:var(--accent); min-width:86px; text-align:center; }
+.st .s.answered { background:var(--hit-soft); color:var(--hit); }
+.st .s.needs_signin, .st .s.needs_you, .st .s.no_textbox, .st .s.no_answer { background:#fff4e5; color:var(--warn); }
+.st .s.error { background:#fde7e4; color:#b42318; }
+@media (prefers-color-scheme: dark) { .st .s.needs_signin, .st .s.needs_you, .st .s.no_textbox, .st .s.no_answer { background:#3a2a14; } .st .s.error { background:#3d1d1a; color:#f97066; } }
+.chip.mine { background: var(--hit-soft); color: var(--hit); font-weight: 600; }
+.chip.comp { background: #fde7e4; color: #b42318; }
+@media (prefers-color-scheme: dark) { .chip.comp { background: #3d1d1a; color: #f97066; } }
+.lvl { display: inline-block; min-width: 46px; text-align: center; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; margin-right: 6px; }
+.lvl.block { background: #fde7e4; color: #b42318; } .lvl.warn { background: #fff4e5; color: var(--warn); } .lvl.info { background: var(--accent-soft); color: var(--accent); }
+@media (prefers-color-scheme: dark) { .lvl.block { background: #3d1d1a; color: #f97066; } .lvl.warn { background: #3a2a14; } }
+.finding { padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+.miss { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.share { font-variant-numeric: tabular-nums; font-weight: 600; }
+.diff li { margin-bottom: 4px; }
+a.link { color: var(--accent); cursor: pointer; text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Traffic Inspector</h1>
+  <nav>
+    <button data-tab="queries" class="on">Queries</button>
+    <button data-tab="compare">Compare</button>
+    <button data-tab="visibility">Visibility</button>
+    <button data-tab="traffic">Traffic</button>
+  </nav>
+  <div class="status">
+    <span><span id="live" class="dot"></span> <span id="liveText">…</span></span>
+    <span id="counts"></span>
+    <label class="small"><input type="checkbox" id="auto" checked> auto-refresh</label>
+    <button class="btn danger" id="stopBtn" title="Stop capture and restore your Mac's proxy settings">Stop capture</button>
+  </div>
+</header>
+
+<main>
+  <!-- QUERIES -->
+  <section id="tab-queries">
+    <div class="card section" id="askCard">
+      <h3>Ask every app the same question</h3>
+      <div class="body">
+        <div id="askOff" class="small muted hidden"></div>
+        <div id="askOn">
+          <textarea id="askPrompt" placeholder="e.g. What is industrial vacancy in Chicago right now?" style="min-height:52px"></textarea>
+          <div class="toolbar" style="margin:8px 0 0">
+            <span id="askApps" class="chips"></span>
+            <button class="btn primary" id="askBtn" style="margin-left:auto">Ask all</button>
+            <button class="btn" id="signinBtn" title="Opens the inspector's Chrome profile so you can sign in to each site once">Open Chrome to sign in</button>
+          </div>
+          <div class="small muted" style="margin-top:6px">Opens a separate, visible Chrome window, types the question into each app and waits for the captured answers. Sign in once with “Open Chrome to sign in”, then quit that window (⌘Q) before asking. Automating these apps may be against their terms of service.</div>
+          <div id="askStatus" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <select id="qApp"><option value="">All apps</option></select>
+      <input type="search" id="qSearch" placeholder="Search prompts, answers, sources…">
+      <button class="btn primary" id="cmpBtn" disabled>Compare selected (0)</button>
+      <button class="btn" id="exportBtn">Export sources CSV</button>
+      <button class="btn danger" id="clearBtn" style="margin-left:auto">Clear all data</button>
+    </div>
+    <div class="split">
+      <div class="card scroll">
+        <table>
+          <thead><tr><th></th><th>Time</th><th>App</th><th>Prompt</th><th class="num">Searches</th><th class="num">Sources</th><th class="num">Domains</th><th class="num">1st token</th></tr></thead>
+          <tbody id="exRows"></tbody>
+        </table>
+        <div id="exEmpty" class="empty hidden">No AI queries captured yet. Start the capture, then ask Claude, ChatGPT, Grok or Meta AI something.</div>
+      </div>
+      <div class="card scroll" id="exDetail"><div class="empty">Select a query to see the prompt, the searches the model ran, the sources it returned and the answer.</div></div>
+    </div>
+  </section>
+
+  <!-- COMPARE -->
+  <section id="tab-compare" class="hidden">
+    <div class="split" style="grid-template-columns: 320px minmax(0,1fr)">
+      <div class="card scroll">
+        <h3>Same prompt across apps</h3>
+        <div id="groups"></div>
+      </div>
+      <div id="cmp"><div class="card"><div class="empty">Pick a group on the left, or tick queries on the Queries tab and press “Compare selected”.</div></div></div>
+    </div>
+  </section>
+
+  <!-- VISIBILITY -->
+  <section id="tab-visibility" class="hidden">
+    <div class="split" style="grid-template-columns: minmax(0,1fr) minmax(0,1fr)">
+      <div>
+        <div class="card section"><h3>Your sites and competitors</h3><div class="body">
+          <div class="split" style="grid-template-columns: 1fr 1fr; gap: 10px">
+            <div><div class="label small muted">MY SITES (one domain per line)</div><textarea id="myDomains" placeholder="mysite.com"></textarea></div>
+            <div><div class="label small muted">COMPETITORS</div><textarea id="compDomains" placeholder="competitor.com"></textarea></div>
+          </div>
+          <div style="margin-top:8px"><button class="btn primary" id="saveDomains">Save</button> <span class="small muted">Subdomains count too. “Not cited” can only be reported for domains you list here.</span></div>
+        </div></div>
+        <div class="card section"><h3>Citation share by app</h3><div class="body" id="board"></div></div>
+        <div class="card section"><h3>Same question, cited by some apps but not others</h3><div id="gaps"></div></div>
+        <div class="card section"><h3>Searches the AIs ran when you weren't cited</h3><div class="body" id="missedSearches"></div></div>
+      </div>
+      <div>
+        <div class="card section"><h3>Page audit</h3><div class="body">
+          <div class="small muted" style="margin-bottom:8px">Fetches pages from this Mac and reports what an AI search crawler would find: robots.txt rules per AI crawler, indexing tags, text visible without JavaScript, headings, structured data, dates, and how well the page matches the searches the AI ran.</div>
+          <div class="section"><div class="label small muted">YOUR PAGE (optional)</div><input type="url" id="auUrl" placeholder="https://mysite.com/page"></div>
+          <div class="section"><div class="label small muted">PAGES THE AI CITED, TO COMPARE AGAINST (one per line, up to 5)</div><textarea id="auCompare"></textarea></div>
+          <div class="section"><div class="label small muted">THE AI'S SEARCHES / QUESTION (one per line)</div><textarea id="auQueries"></textarea></div>
+          <button class="btn primary" id="auRun">Run audit</button> <span id="auBusy" class="small muted"></span>
+        </div></div>
+        <div id="auResult"></div>
+        <div class="card section"><h3>Queries where you weren't cited</h3><div id="missed" class="scroll" style="max-height:600px"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TRAFFIC -->
+  <section id="tab-traffic" class="hidden">
+    <div class="toolbar">
+      <select id="tApp"><option value="">All apps</option></select>
+      <select id="tHost"><option value="">All hosts</option></select>
+      <label class="small"><input type="checkbox" id="tChat"> chat requests only</label>
+      <input type="search" id="tSearch" placeholder="Search URLs and bodies…">
+    </div>
+    <div class="split">
+      <div>
+        <div class="card section">
+          <h3>Hosts contacted</h3>
+          <div class="scroll" style="max-height:260px"><table><thead><tr><th>App</th><th>Host</th><th class="num">Requests</th><th class="num">Sent</th><th class="num">Received</th></tr></thead><tbody id="hostRows"></tbody></table></div>
+        </div>
+        <div class="card scroll" style="max-height: calc(100vh - 470px); min-height: 260px">
+          <table><thead><tr><th>Time</th><th>App</th><th>Method</th><th class="num">Status</th><th>Host / path</th><th class="num">Size</th><th class="num">ms</th></tr></thead><tbody id="flowRows"></tbody></table>
+        </div>
+      </div>
+      <div class="card scroll" id="flowDetail"><div class="empty">Select a request to see headers and bodies. Auth headers and cookies are redacted before storage.</div></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const api = async (p, opt) => { const r = await fetch(p, opt); return r.json(); };
+const APP_COLORS = {'Claude':'--c-claude','ChatGPT':'--c-chatgpt','Grok':'--c-grok','Meta AI (Muse)':'--c-meta','Gemini':'--c-gemini','Perplexity':'--c-perplexity'};
+const badge = a => `<span class="badge" style="background:var(${APP_COLORS[a] || '--c-other'})">${esc(a)}</span>`;
+const time = ts => new Date(ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+const day = ts => new Date(ts * 1000).toLocaleDateString([], {month:'short', day:'numeric'});
+const secs = v => v == null ? '–' : (v < 10 ? v.toFixed(2) : v.toFixed(1)) + 's';
+const bytes = n => n == null ? '–' : n < 1024 ? n + ' B' : n < 1048576 ? (n/1024).toFixed(1) + ' KB' : (n/1048576).toFixed(1) + ' MB';
+const selected = new Set();
+let tab = 'queries', curEx = null, curFlow = null, lastStatus = '';
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+function showTab(t) {
+  tab = t;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  ['queries','compare','visibility','traffic'].forEach(x => $('#tab-' + x).classList.toggle('hidden', x !== t));
+  refresh();
+}
+
+async function loadApps() {
+  const apps = await api('/api/apps');
+  for (const sel of [$('#qApp'), $('#tApp')]) {
+    const v = sel.value;
+    sel.innerHTML = '<option value="">All apps</option>' + apps.map(a => `<option ${a.app===v?'selected':''}>${esc(a.app)}</option>`).join('');
+  }
+}
+
+// ---------------- Queries ----------------
+async function loadExchanges() {
+  const p = new URLSearchParams({app: $('#qApp').value, q: $('#qSearch').value});
+  const rows = await api('/api/exchanges?' + p);
+  $('#exEmpty').classList.toggle('hidden', rows.length > 0);
+  $('#exRows').innerHTML = rows.map(r => `
+    <tr data-id="${r.id}" class="${r.id === curEx ? 'sel' : ''}">
+      <td><input type="checkbox" data-pick="${r.id}" ${selected.has(r.id) ? 'checked' : ''}></td>
+      <td class="small muted" title="${day(r.ts)}">${time(r.ts)}</td>
+      <td>${badge(r.app)}<div class="small muted">${esc(r.client)}</div></td>
+      <td><div class="trunc">${esc(r.prompt) || '<span class="muted">(no prompt parsed)</span>'}</div></td>
+      <td class="num">${r.search_queries.length}</td>
+      <td class="num">${r.n_sources}</td>
+      <td class="num">${r.n_domains}</td>
+      <td class="num small">${secs(r.ttft)}</td>
+    </tr>`).join('');
+}
+$('#exRows').addEventListener('click', e => {
+  const pick = e.target.dataset.pick;
+  if (pick) { const id = +pick; e.target.checked ? selected.add(id) : selected.delete(id); updateCmpBtn(); return; }
+  const tr = e.target.closest('tr'); if (tr) openExchange(+tr.dataset.id);
+});
+function updateCmpBtn() { $('#cmpBtn').textContent = `Compare selected (${selected.size})`; $('#cmpBtn').disabled = selected.size < 2; }
+$('#cmpBtn').onclick = () => { showTab('compare'); runCompare([...selected]); };
+$('#exportBtn').onclick = () => location.href = '/api/export.csv' + (selected.size ? '?ids=' + [...selected].join(',') : '');
+$('#clearBtn').onclick = async () => { if (confirm('Delete every captured request and query?')) { await fetch('/api/clear', {method:'POST', headers:{'X-AITI':'1'}}); selected.clear(); updateCmpBtn(); refresh(); } };
+$('#stopBtn').onclick = async () => { if (confirm('Stop capturing and restore the Mac proxy settings?')) { await fetch('/api/shutdown', {method:'POST', headers:{'X-AITI':'1'}}); $('#liveText').textContent = 'stopped'; } };
+
+function sourcesHtml(sources) {
+  if (!sources.length) return '<div class="muted small">No URLs in the response.</div>';
+  return sources.map((s, i) => `<div class="src"><span class="muted small">${i+1}.</span> <span class="dom">${esc(s.domain)}</span>
+    ${s.title ? `<div class="small">${esc(s.title)}</div>` : ''}<div class="small"><a href="${esc(s.url)}" target="_blank" rel="noreferrer">${esc(s.url)}</a> · <a class="link" data-audit="${esc(s.url)}">audit</a></div></div>`).join('');
+}
+async function openExchange(id) {
+  curEx = id;
+  document.querySelectorAll('#exRows tr').forEach(tr => tr.classList.toggle('sel', +tr.dataset.id === id));
+  const e = await api('/api/exchanges/' + id);
+  $('#exDetail').innerHTML = `<div class="body">
+    <div class="section">${badge(e.app)} <span class="muted small">${esc(e.client)} · ${day(e.ts)} ${time(e.ts)} · model ${esc(e.model || '?')} · parser ${esc(e.parser)}</span></div>
+    <div class="stat section"><span>1st token <b>${secs(e.ttft)}</b></span><span>total <b>${secs(e.duration)}</b></span><span>answer <b>${(e.response_text||'').length.toLocaleString()}</b> chars</span><span><b>${e.n_sources}</b> URLs / <b>${e.n_domains}</b> domains</span></div>
+    <div class="section"><div class="label">Prompt</div><div class="answer">${esc(e.prompt)}</div></div>
+    <div class="section"><div class="label">Searches the model ran</div><div class="chips">${e.search_queries.map(q => `<span class="chip q">${esc(q)}</span>`).join('') || '<span class="muted small">None seen in the traffic.</span>'}</div></div>
+    <div class="section"><div class="label">Domains</div><div class="chips">${e.domains.map(d => `<span class="chip">${esc(d)}</span>`).join('') || '<span class="muted small">–</span>'}</div></div>
+    <details class="section" open><summary>Sources returned (${e.sources.length})</summary>${sourcesHtml(e.sources)}</details>
+    <details class="section" open><summary>Answer</summary><div class="answer">${esc(e.response_text) || '<span class="muted">(no answer text parsed — see raw traffic)</span>'}</div></details>
+    <button class="btn" onclick="openFlowFromEx(${e.flow_id})">View raw request/response</button>
+  </div>`;
+}
+window.openFlowFromEx = id => { showTab('traffic'); openFlow(id); };
+
+// ---------------- Compare ----------------
+async function loadGroups() {
+  const groups = await api('/api/groups');
+  $('#groups').innerHTML = groups.map(g => `<div class="group" data-ids="${g.ids.join(',')}">
+      <div class="trunc">${esc(g.prompt)}</div>
+      <div style="margin-top:4px">${g.apps.map(badge).join(' ')} <span class="muted small">${g.ids.length} runs</span></div></div>`).join('')
+    || '<div class="empty small">Ask the same question in two or more apps and it will show up here.</div>';
+}
+$('#groups').addEventListener('click', e => { const g = e.target.closest('.group'); if (g) runCompare(g.dataset.ids.split(',').map(Number)); });
+
+const heat = v => v == null ? '<td class="heat muted">–</td>' :
+  `<td class="heat" style="background:color-mix(in srgb, var(--hit) ${Math.round(v*55)}%, transparent)">${Math.round(v*100)}%</td>`;
+
+async function runCompare(ids) {
+  const c = await api('/api/compare?ids=' + ids.join(','));
+  const ex = c.exchanges;
+  if (!ex.length) return;
+  const n = ex.length, grid = `grid-template-columns: repeat(${n}, minmax(260px, 1fr))`;
+  const label = (e, i) => `${badge(e.app)} <span class="small muted">#${i+1} ${esc(e.client)}</span>`;
+  $('#cmp').innerHTML = `
+    <div class="card section"><div class="body"><div class="label muted small">PROMPT${new Set(ex.map(e=>e.prompt_norm)).size > 1 ? 'S DIFFER' : ''}</div><div class="answer">${esc(ex[0].prompt)}</div></div></div>
+    <div class="cols section" style="${grid}; overflow-x:auto">${ex.map((e, i) => `<div class="card"><div class="body">
+      <div class="section">${label(e, i)}</div>
+      <div class="stat small"><span>model <b>${esc(e.model || '?')}</b></span><span>1st token <b>${secs(e.ttft)}</b></span><span>total <b>${secs(e.duration)}</b></span>
+      <span><b>${e.n_sources}</b> URLs</span><span><b>${e.n_domains}</b> domains</span><span><b>${(e.response_text||'').length.toLocaleString()}</b> chars</span></div>
+      <div class="section" style="margin-top:10px"><div class="label">Searches</div><div class="chips">${e.search_queries.map(q => `<span class="chip q">${esc(q)}</span>`).join('') || '<span class="muted small">none seen</span>'}</div></div>
+      <div class="section"><div class="label">Only this app cited</div><div class="chips">${c.unique_domains[i].map(d => `<span class="chip">${esc(d)}</span>`).join('') || '<span class="muted small">–</span>'}</div></div>
+    </div></div>`).join('')}</div>
+    <div class="split section" style="grid-template-columns: minmax(0,1fr) minmax(0,1.6fr)">
+      <div class="card"><h3>Source overlap (domains)</h3><div class="body">
+        <table><thead><tr><th></th>${ex.map((e,i)=>`<th class="heat">#${i+1}</th>`).join('')}</tr></thead>
+        <tbody>${c.domain_similarity.map((row, i) => `<tr><td>${label(ex[i], i)}</td>${row.map(heat).join('')}</tr>`).join('')}</tbody></table>
+        <div class="small muted" style="margin-top:8px">Jaccard overlap of cited domains. Shared by all: ${c.shared_domains.map(esc).join(', ') || 'none'}.</div>
+      </div></div>
+      <div class="card"><h3>Domain × app</h3><div class="scroll" style="max-height:340px">
+        <table class="matrix"><thead><tr><th>Domain</th>${ex.map((e,i)=>`<th class="heat">${badge(e.app)}<div class="small muted">#${i+1}</div></th>`).join('')}</tr></thead>
+        <tbody>${c.matrix.map(r => `<tr><td><span class="dom">${esc(r.domain)}</span></td>${r.cells.map(cell => `<td class="cell">${cell.length ? `<span class="tick" title="${esc(cell.map(u=>u.url).join('\n'))}">${cell.length}</span>` : ''}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${n+1}" class="muted">No sources in any response.</td></tr>`}</tbody></table>
+      </div></div>
+    </div>
+    <div class="cols section" style="${grid}; overflow-x:auto">${ex.map((e, i) => `<div class="card"><h3>${label(e, i)} answer</h3><div class="body"><div class="answer">${esc(e.response_text) || '<span class="muted">(none parsed)</span>'}</div></div></div>`).join('')}</div>
+    <div class="cols section" style="${grid}; overflow-x:auto">${ex.map((e, i) => `<div class="card"><h3>${label(e, i)} sources</h3><div class="body">${sourcesHtml(e.sources)}</div></div>`).join('')}</div>
+    <button class="btn" onclick="location.href='/api/export.csv?ids=${ids.join(',')}'">Export this comparison as CSV</button>`;
+}
+
+// ---------------- Traffic ----------------
+async function loadTraffic() {
+  const app = $('#tApp').value;
+  const hosts = await api('/api/hosts?' + new URLSearchParams({app}));
+  const hv = $('#tHost').value;
+  $('#tHost').innerHTML = '<option value="">All hosts</option>' + [...new Set(hosts.map(h => h.host))].map(h => `<option ${h===hv?'selected':''}>${esc(h)}</option>`).join('');
+  $('#hostRows').innerHTML = hosts.map(h => `<tr data-host="${esc(h.host)}"><td>${badge(h.app)}</td><td>${esc(h.host)}${h.chats ? ' <span class="chip">chat</span>' : ''}</td><td class="num">${h.n}</td><td class="num small">${bytes(h.up)}</td><td class="num small">${bytes(h.down)}</td></tr>`).join('');
+  const flows = await api('/api/flows?' + new URLSearchParams({app, host: $('#tHost').value, chat: $('#tChat').checked ? '1' : '', q: $('#tSearch').value}));
+  $('#flowRows').innerHTML = flows.map(f => `<tr data-id="${f.id}" class="${f.id === curFlow ? 'sel' : ''}">
+    <td class="small muted">${time(f.ts)}</td><td>${badge(f.app)}</td><td class="small">${esc(f.method)}</td>
+    <td class="num small" style="${f.status >= 400 || f.error ? 'color:#c4320a' : ''}">${f.error ? 'ERR' : f.status}</td>
+    <td class="small"><b>${esc(f.host)}</b>${f.is_chat ? ' <span class="chip">chat</span>' : ''}<div class="muted" style="word-break:break-all">${esc(f.path.slice(0, 160))}</div></td>
+    <td class="num small">${bytes(f.resp_size)}</td><td class="num small">${f.duration ? Math.round(f.duration * 1000) : '–'}</td></tr>`).join('');
+}
+$('#hostRows').addEventListener('click', e => { const tr = e.target.closest('tr'); if (tr) { $('#tHost').value = tr.dataset.host; loadTraffic(); } });
+$('#flowRows').addEventListener('click', e => { const tr = e.target.closest('tr'); if (tr) openFlow(+tr.dataset.id); });
+['#tApp', '#tHost', '#tChat'].forEach(s => $(s).onchange = loadTraffic);
+['#qApp'].forEach(s => $(s).onchange = loadExchanges);
+let tmr; for (const [s, fn] of [['#qSearch', loadExchanges], ['#tSearch', loadTraffic]]) $(s).oninput = () => { clearTimeout(tmr); tmr = setTimeout(fn, 250); };
+
+const kv = hs => `<div class="kv">${hs.map(([k, v]) => `<div>${esc(k)}</div><div>${esc(v)}</div>`).join('')}</div>`;
+async function openFlow(id) {
+  curFlow = id;
+  document.querySelectorAll('#flowRows tr').forEach(tr => tr.classList.toggle('sel', +tr.dataset.id === id));
+  const f = await api('/api/flows/' + id);
+  $('#flowDetail').innerHTML = `<div class="body">
+    <div class="section">${badge(f.app)} <b>${esc(f.method)}</b> <span class="small" style="word-break:break-all">${esc(f.url)}</span></div>
+    <div class="stat section small"><span>status <b>${f.status}</b></span><span>${esc(f.client)}</span><span>mode ${esc(f.mode)}</span><span>headers in <b>${secs(f.ttfb)}</b></span><span>1st chunk <b>${secs(f.ttft)}</b></span><span>total <b>${secs(f.duration)}</b></span>${f.error ? `<span style="color:#c4320a">${esc(f.error)}</span>` : ''}</div>
+    ${f.exchange_id ? `<button class="btn section" onclick="showTab('queries');openExchange(${f.exchange_id})">Open parsed query</button>` : ''}
+    <details class="section"><summary>Request headers (${f.req_headers.length})</summary>${kv(f.req_headers)}</details>
+    <details class="section" ${f.req_body ? 'open' : ''}><summary>Request body (${bytes(f.req_size)})</summary><pre>${esc(f.req_body || '(empty)')}</pre></details>
+    <details class="section"><summary>Response headers (${f.resp_headers.length})</summary>${kv(f.resp_headers)}</details>
+    <details class="section" open><summary>Response body (${bytes(f.resp_size)})</summary><pre>${esc(f.resp_body == null ? '(not stored: binary/media)' : (f.resp_body.length > 300000 ? f.resp_body.slice(0, 300000) + '\n… truncated in view' : f.resp_body) || '(empty)')}</pre></details>
+  </div>`;
+}
+
+
+// ---------------- Visibility ----------------
+let vis = null;
+const pct = v => v == null ? '–' : Math.round(v * 100) + '%';
+async function loadVisibility() {
+  const st = await api('/api/settings');
+  if (document.activeElement !== $('#myDomains') && document.activeElement !== $('#compDomains')) {
+    $('#myDomains').value = st.my_domains.join('\n'); $('#compDomains').value = st.competitors.join('\n');
+  }
+  vis = await api('/api/visibility');
+  const v = vis;
+  if (!v.board.length) {
+    $('#board').innerHTML = '<div class="muted small">Add your domains (and competitors) above to see how often each AI cites them.</div>';
+  } else {
+    $('#board').innerHTML = `<table><thead><tr><th>Domain</th>${v.apps.map(a => `<th class="heat">${badge(a)}</th>`).join('')}</tr></thead><tbody>
+      ${v.board.map(r => `<tr><td><span class="chip ${r.kind === 'mine' ? 'mine' : 'comp'}">${esc(r.domain)}</span></td>
+        ${v.apps.map(a => { const c = r.cells[a]; return c.share == null ? '<td class="heat muted">–</td>' :
+          `<td class="heat" style="background:color-mix(in srgb, var(${r.kind === 'mine' ? '--hit' : '--c-other'}) ${Math.round((c.share||0)*50)}%, transparent)">
+            <span class="share">${pct(c.share)}</span><div class="small muted">${c.cited}/${c.total}${c.avg_rank ? ' · rank ' + c.avg_rank : ''}</div></td>`; }).join('')}</tr>`).join('')}
+      </tbody></table><div class="small muted" style="margin-top:6px">Share of captured queries in each app whose sources include the domain; rank is its average position in the source list.</div>`;
+  }
+  $('#gaps').innerHTML = v.gaps.map((g, i) => `<div class="miss"><div class="trunc">${esc(g.prompt)}</div>
+      <div class="small" style="margin-top:4px">Cited by ${g.cited_by.map(badge).join(' ')} · not by ${g.missed_by.map(badge).join(' ')}</div>
+      <div class="small muted">Your cited page: <a href="${esc(g.my_url)}" target="_blank" rel="noreferrer">${esc(g.my_url)}</a> · <a class="link" data-gap="${i}">audit it</a></div>
+      ${Object.entries(g.apps).map(([a, c]) => `<div class="small" style="margin-top:4px">${badge(a)} searched: ${c.searches.map(q => `<span class="chip q">${esc(q)}</span>`).join(' ') || '<span class="muted">none seen</span>'}</div>`).join('')}
+      <div class="small muted" style="margin-top:4px">Check the missing app's crawler access (the audit's robots.txt table), and compare the searches it ran with your page's title and headings.</div></div>`).join('')
+    || `<div class="body small muted">${v.mine.length ? 'No split results yet. Ask the same question in several apps.' : 'Add your domains first.'}</div>`;
+  $('#missedSearches').innerHTML = v.missed_searches.length
+    ? `<div class="chips">${v.missed_searches.map(([q, n]) => `<span class="chip q">${esc(q)}${n > 1 ? ' ×' + n : ''}</span>`).join('')}</div>
+       <div class="small muted" style="margin-top:8px">These are the literal searches the AIs ran. Pages that rank for them are the ones that get pulled in.
+       Common terms: ${v.missed_terms.slice(0, 20).map(([t, n]) => esc(t) + ' (' + n + ')').join(', ')}</div>`
+    : '<div class="muted small">None yet' + (v.mine.length ? '.' : ' — add your domains first.') + '</div>';
+  $('#missed').innerHTML = v.missed.map((m, i) => `<div class="miss">
+      <div>${badge(m.app)} <span class="small muted">${day(m.ts)} ${time(m.ts)}</span></div>
+      <div class="trunc" style="margin:4px 0">${esc(m.prompt)}</div>
+      ${m.no_sources ? '<div class="small muted">Answered without web sources (from the model\'s own knowledge).</div>' : ''}
+      ${m.search_queries.length ? `<div class="chips" style="margin-bottom:4px">${m.search_queries.map(q => `<span class="chip q">${esc(q)}</span>`).join('')}</div>` : ''}
+      <div class="chips">${m.cited.map(c => `<span class="chip ${c.competitor ? 'comp' : ''}">${esc(c.domain)}</span>`).join('')}</div>
+      ${m.top_urls.length ? `<div style="margin-top:6px"><a class="link small" data-miss="${i}">Compare my page with what was cited →</a></div>` : ''}
+    </div>`).join('') || `<div class="body small muted">${v.mine.length ? 'Your sites were cited in every captured query.' : 'Add your domains to see the queries where they were missed.'}</div>`;
+}
+$('#saveDomains').onclick = async () => {
+  await fetch('/api/settings', {method: 'POST', headers: {'X-AITI': '1', 'Content-Type': 'application/json'},
+    body: JSON.stringify({my_domains: $('#myDomains').value.split(/\s+/), competitors: $('#compDomains').value.split(/\s+/)})});
+  loadVisibility();
+};
+function prepAudit({url = '', compare = [], queries = []}) {
+  $('#auUrl').value = url; $('#auCompare').value = compare.join('\n'); $('#auQueries').value = queries.join('\n');
+  $('#auUrl').scrollIntoView({behavior: 'smooth', block: 'center'}); if (!url) $('#auUrl').focus();
+}
+document.addEventListener('click', e => {
+  const t = e.target;
+  if (t.dataset.miss != null) { const m = vis.missed[+t.dataset.miss]; prepAudit({compare: m.top_urls.slice(0, 3), queries: m.search_queries.length ? m.search_queries : [m.prompt]}); }
+  if (t.dataset.gap != null) { const g = vis.gaps[+t.dataset.gap]; prepAudit({url: g.my_url, queries: g.missed_searches.length ? g.missed_searches : [g.prompt]}); runAudit(); }
+  if (t.dataset.audit) { showTab('visibility'); prepAudit({compare: [t.dataset.audit]}); runAudit(); }
+});
+$('#auRun').onclick = () => runAudit();
+
+function auditCard(a, label) {
+  if (!a) return '';
+  const rb = a.robots.bots.filter(b => b.verified);
+  return `<div class="card section"><h3>${label}</h3><div class="body">
+    <div class="small" style="word-break:break-all"><a href="${esc(a.final_url)}" target="_blank" rel="noreferrer">${esc(a.final_url)}</a></div>
+    <div class="stat small section" style="margin-top:6px"><span>HTTP <b>${a.status || 'ERR'}</b></span><span><b>${a.elapsed}s</b></span><span><b>${(a.word_count||0).toLocaleString()}</b> words in HTML</span>
+      <span><b>${(a.headings||[]).length}</b> headings</span><span>schema: <b>${esc((a.schema_types||[]).join(', ') || 'none')}</b></span>
+      ${a.coverage && a.coverage.headings != null ? `<span>search terms in title/headings <b>${pct(a.coverage.headings)}</b>, body <b>${pct(a.coverage.body)}</b></span>` : ''}</div>
+    ${a.title ? `<div class="small section"><b>Title:</b> ${esc(a.title)}${a.h1 && a.h1.length ? `<br><b>H1:</b> ${esc(a.h1[0])}` : ''}</div>` : ''}
+    <div class="section">${(a.findings||[]).map(f => `<div class="finding"><span class="lvl ${f.level}">${f.level === 'block' ? 'blocks' : f.level}</span><b>${esc(f.area)}:</b> ${esc(f.message)}</div>`).join('')}</div>
+    ${rb.length ? `<details><summary>AI crawler access in robots.txt (${esc(a.robots.state)})</summary><table class="small"><thead><tr><th>App</th><th>Crawler</th><th>Role</th><th>Allowed</th></tr></thead><tbody>
+      ${a.robots.bots.map(b => `<tr><td>${badge(b.app)}</td><td>${esc(b.token)}${b.verified ? '' : ' <span class="muted">(unverified)</span>'}</td><td>${esc(b.role)}</td>
+      <td>${b.allowed == null ? '<span class="muted">unknown</span>' : b.allowed ? '<span class="tick">yes</span>' : '<span class="lvl block">no</span>'}</td></tr>`).join('')}</tbody></table>
+      <div class="small muted">Roles: search = builds the app's search index; fetch = live fetch for a user's question; train = model training only. Sources are listed in bots.py.</div></details>` : ''}
+    ${a.headings && a.headings.length ? `<details><summary>Headings</summary><pre>${esc(a.headings.map(([t, h]) => t.toUpperCase() + '  ' + h).join('\n'))}</pre></details>` : ''}
+  </div></div>`;
+}
+async function runAudit() {
+  const body = {url: $('#auUrl').value.trim(), compare: $('#auCompare').value.split(/\s+/).filter(Boolean),
+                queries: $('#auQueries').value.split('\n').map(x => x.trim()).filter(Boolean)};
+  if (!body.url && !body.compare.length) { $('#auBusy').textContent = 'Enter a URL first.'; return; }
+  $('#auRun').disabled = true; $('#auBusy').textContent = 'Fetching pages…';
+  try {
+    const r = await (await fetch('/api/audit', {method: 'POST', headers: {'X-AITI': '1', 'Content-Type': 'application/json'}, body: JSON.stringify(body)})).json();
+    if (r.error) throw new Error(r.error);
+    $('#auResult').innerHTML =
+      (r.differences.length ? `<div class="card section"><h3>Your page vs the cited pages</h3><div class="body"><ul class="diff">${r.differences.map(d => `<li>${esc(d)}</li>`).join('')}</ul>
+        <div class="small muted">These are observed differences, not proof of why the AI chose those pages.</div></div></div>` : '')
+      + auditCard(r.mine, 'Your page') + r.others.map((o, i) => auditCard(o, 'Cited page ' + (i + 1))).join('');
+    $('#auBusy').textContent = '';
+  } catch (e) { $('#auBusy').textContent = 'Audit failed: ' + e.message; }
+  $('#auRun').disabled = false;
+}
+
+
+// ---------------- Ask all ----------------
+let askInfo = null, askRun = null, askTimer = null;
+const ST_LABEL = {queued:'queued', opening:'opening', waiting:'waiting', answered:'answered', needs_signin:'sign in', needs_you:'needs you', no_textbox:'no text box', no_answer:'no answer', error:'error'};
+async function loadAsk() {
+  const info = await api('/api/ask');
+  const first = !askInfo;
+  askInfo = info;
+  $('#askOff').classList.toggle('hidden', info.available);
+  $('#askOn').classList.toggle('hidden', !info.available);
+  if (!info.available) { $('#askOff').textContent = info.reason; return; }
+  if (first) {
+    let saved = []; try { saved = JSON.parse(localStorage.getItem('aiti_apps') || '[]'); } catch (e) {}
+    $('#askApps').innerHTML = info.sites.map(a => `<label class="small"><input type="checkbox" value="${esc(a)}" ${!saved.length || saved.includes(a) ? 'checked' : ''}> ${badge(a)}</label>`).join(' ');
+  }
+  $('#askBtn').disabled = info.busy || !info.chrome;
+  if (!info.chrome) $('#askStatus').innerHTML = '<div class="small" style="color:var(--warn)">Google Chrome wasn\'t found. Install it, or start with --chrome /path/to/chrome.</div>';
+  else if (info.profile_in_use && !askRun) $('#askStatus').innerHTML = '<div class="small" style="color:var(--warn)">The sign-in Chrome window is open. Quit it (⌘Q) when you\'re signed in, then press Ask all.</div>';
+}
+const pickedApps = () => [...document.querySelectorAll('#askApps input:checked')].map(i => i.value);
+$('#askBtn').onclick = async () => {
+  const apps = pickedApps();
+  try { localStorage.setItem('aiti_apps', JSON.stringify(apps)); } catch (e) {}
+  const r = await (await fetch('/api/ask', {method:'POST', headers:{'X-AITI':'1','Content-Type':'application/json'}, body: JSON.stringify({prompt: $('#askPrompt').value, apps})})).json();
+  if (r.error) { $('#askStatus').innerHTML = `<div class="small" style="color:var(--warn)">${esc(r.error)}</div>`; return; }
+  askRun = r.run_id; $('#askBtn').disabled = true; pollRun();
+};
+$('#signinBtn').onclick = async () => {
+  const r = await (await fetch('/api/ask/signin', {method:'POST', headers:{'X-AITI':'1','Content-Type':'application/json'}, body: JSON.stringify({apps: pickedApps()})})).json();
+  $('#askStatus').innerHTML = `<div class="small ${r.error ? '' : 'muted'}" style="${r.error ? 'color:var(--warn)' : ''}">${esc(r.error || 'Chrome opened with a tab for each app. Sign in to each, then quit that Chrome window (⌘Q) and press Ask all.')}</div>`;
+};
+async function pollRun() {
+  clearTimeout(askTimer);
+  if (!askRun) return;
+  const run = await api('/api/runs/' + askRun);
+  const ids = Object.values(run.apps).map(s => s.exchange_id).filter(Boolean);
+  $('#askStatus').innerHTML = (run.error ? `<div class="small" style="color:#c4320a">${esc(run.error)}</div>` : '') +
+    Object.entries(run.apps).map(([a, s]) => `<div class="st">${badge(a)}<span class="s ${s.status}">${ST_LABEL[s.status] || s.status}</span>
+      <span class="small muted">${esc(s.detail)}</span>${s.exchange_id ? ` <a class="link small" onclick="openExchange(${s.exchange_id})">view</a>` : ''}</div>`).join('') +
+    (run.done ? `<div style="margin-top:8px">${ids.length > 1 ? `<button class="btn primary" onclick="showTab('compare');runCompare([${ids.join(',')}])">Compare these ${ids.length} answers</button>` : ''}
+      <span class="small muted">Run finished.</span></div>` : '');
+  if (run.done) { askRun = null; loadAsk(); loadExchanges(); } else askTimer = setTimeout(pollRun, 1500);
+}
+
+// ---------------- refresh loop ----------------
+async function refresh() {
+  if (tab === 'queries') await loadExchanges();
+  else if (tab === 'compare') await loadGroups();
+  else if (tab === 'visibility') await loadVisibility();
+  else await loadTraffic();
+}
+async function poll() {
+  try {
+    const s = await api('/api/status');
+    $('#live').classList.toggle('live', !!s.capturing);
+    $('#liveText').textContent = s.capturing ? `capturing on :${s.proxy_port}${s.system_proxy ? ' (system proxy on)' : ''}` : 'not capturing (viewer only)';
+    $('#stopBtn').classList.toggle('hidden', !s.capturing);
+    $('#counts').textContent = `${s.exchanges} queries · ${s.flows} requests`;
+    const key = s.last_flow + ':' + s.last_exchange;
+    if (s.capturing !== window._capt) { window._capt = s.capturing; loadAsk(); }
+    if (key !== lastStatus) { lastStatus = key; await loadApps(); if ($('#auto').checked) await refresh(); }
+  } catch (e) { $('#live').classList.remove('live'); $('#liveText').textContent = 'inspector not running'; }
+}
+poll(); setInterval(poll, 2500);
+</script>
+</body>
+</html>
