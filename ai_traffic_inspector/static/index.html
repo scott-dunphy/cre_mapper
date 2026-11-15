@@ -80,6 +80,12 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin:
 .hidden { display: none !important; }
 textarea { font: 12.5px/1.5 var(--mono); width: 100%; min-height: 70px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); resize: vertical; }
 input[type=url], input[type=text] { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); width: 100%; }
+.st { display:flex; gap:8px; align-items:center; padding:4px 0; font-size:13px; }
+.st .s { font-size:11px; font-weight:700; text-transform:uppercase; padding:1px 7px; border-radius:4px; background:var(--accent-soft); color:var(--accent); min-width:86px; text-align:center; }
+.st .s.answered { background:var(--hit-soft); color:var(--hit); }
+.st .s.needs_signin, .st .s.needs_you, .st .s.no_textbox, .st .s.no_answer { background:#fff4e5; color:var(--warn); }
+.st .s.error { background:#fde7e4; color:#b42318; }
+@media (prefers-color-scheme: dark) { .st .s.needs_signin, .st .s.needs_you, .st .s.no_textbox, .st .s.no_answer { background:#3a2a14; } .st .s.error { background:#3d1d1a; color:#f97066; } }
 .chip.mine { background: var(--hit-soft); color: var(--hit); font-weight: 600; }
 .chip.comp { background: #fde7e4; color: #b42318; }
 @media (prefers-color-scheme: dark) { .chip.comp { background: #3d1d1a; color: #f97066; } }
@@ -113,6 +119,22 @@ a.link { color: var(--accent); cursor: pointer; text-decoration: none; }
 <main>
   <!-- QUERIES -->
   <section id="tab-queries">
+    <div class="card section" id="askCard">
+      <h3>Ask every app the same question</h3>
+      <div class="body">
+        <div id="askOff" class="small muted hidden"></div>
+        <div id="askOn">
+          <textarea id="askPrompt" placeholder="e.g. What is industrial vacancy in Chicago right now?" style="min-height:52px"></textarea>
+          <div class="toolbar" style="margin:8px 0 0">
+            <span id="askApps" class="chips"></span>
+            <button class="btn primary" id="askBtn" style="margin-left:auto">Ask all</button>
+            <button class="btn" id="signinBtn" title="Opens the inspector's Chrome profile so you can sign in to each site once">Open Chrome to sign in</button>
+          </div>
+          <div class="small muted" style="margin-top:6px">Opens a separate, visible Chrome window, types the question into each app and waits for the captured answers. Sign in once with “Open Chrome to sign in”, then quit that window (⌘Q) before asking. Automating these apps may be against their terms of service.</div>
+          <div id="askStatus" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </div>
     <div class="toolbar">
       <select id="qApp"><option value="">All apps</option></select>
       <input type="search" id="qSearch" placeholder="Search prompts, answers, sources…">
@@ -446,6 +468,50 @@ async function runAudit() {
   $('#auRun').disabled = false;
 }
 
+
+// ---------------- Ask all ----------------
+let askInfo = null, askRun = null, askTimer = null;
+const ST_LABEL = {queued:'queued', opening:'opening', waiting:'waiting', answered:'answered', needs_signin:'sign in', needs_you:'needs you', no_textbox:'no text box', no_answer:'no answer', error:'error'};
+async function loadAsk() {
+  const info = await api('/api/ask');
+  const first = !askInfo;
+  askInfo = info;
+  $('#askOff').classList.toggle('hidden', info.available);
+  $('#askOn').classList.toggle('hidden', !info.available);
+  if (!info.available) { $('#askOff').textContent = info.reason; return; }
+  if (first) {
+    let saved = []; try { saved = JSON.parse(localStorage.getItem('aiti_apps') || '[]'); } catch (e) {}
+    $('#askApps').innerHTML = info.sites.map(a => `<label class="small"><input type="checkbox" value="${esc(a)}" ${!saved.length || saved.includes(a) ? 'checked' : ''}> ${badge(a)}</label>`).join(' ');
+  }
+  $('#askBtn').disabled = info.busy || !info.chrome;
+  if (!info.chrome) $('#askStatus').innerHTML = '<div class="small" style="color:var(--warn)">Google Chrome wasn\'t found. Install it, or start with --chrome /path/to/chrome.</div>';
+  else if (info.profile_in_use && !askRun) $('#askStatus').innerHTML = '<div class="small" style="color:var(--warn)">The sign-in Chrome window is open. Quit it (⌘Q) when you\'re signed in, then press Ask all.</div>';
+}
+const pickedApps = () => [...document.querySelectorAll('#askApps input:checked')].map(i => i.value);
+$('#askBtn').onclick = async () => {
+  const apps = pickedApps();
+  try { localStorage.setItem('aiti_apps', JSON.stringify(apps)); } catch (e) {}
+  const r = await (await fetch('/api/ask', {method:'POST', headers:{'X-AITI':'1','Content-Type':'application/json'}, body: JSON.stringify({prompt: $('#askPrompt').value, apps})})).json();
+  if (r.error) { $('#askStatus').innerHTML = `<div class="small" style="color:var(--warn)">${esc(r.error)}</div>`; return; }
+  askRun = r.run_id; $('#askBtn').disabled = true; pollRun();
+};
+$('#signinBtn').onclick = async () => {
+  const r = await (await fetch('/api/ask/signin', {method:'POST', headers:{'X-AITI':'1','Content-Type':'application/json'}, body: JSON.stringify({apps: pickedApps()})})).json();
+  $('#askStatus').innerHTML = `<div class="small ${r.error ? '' : 'muted'}" style="${r.error ? 'color:var(--warn)' : ''}">${esc(r.error || 'Chrome opened with a tab for each app. Sign in to each, then quit that Chrome window (⌘Q) and press Ask all.')}</div>`;
+};
+async function pollRun() {
+  clearTimeout(askTimer);
+  if (!askRun) return;
+  const run = await api('/api/runs/' + askRun);
+  const ids = Object.values(run.apps).map(s => s.exchange_id).filter(Boolean);
+  $('#askStatus').innerHTML = (run.error ? `<div class="small" style="color:#c4320a">${esc(run.error)}</div>` : '') +
+    Object.entries(run.apps).map(([a, s]) => `<div class="st">${badge(a)}<span class="s ${s.status}">${ST_LABEL[s.status] || s.status}</span>
+      <span class="small muted">${esc(s.detail)}</span>${s.exchange_id ? ` <a class="link small" onclick="openExchange(${s.exchange_id})">view</a>` : ''}</div>`).join('') +
+    (run.done ? `<div style="margin-top:8px">${ids.length > 1 ? `<button class="btn primary" onclick="showTab('compare');runCompare([${ids.join(',')}])">Compare these ${ids.length} answers</button>` : ''}
+      <span class="small muted">Run finished.</span></div>` : '');
+  if (run.done) { askRun = null; loadAsk(); loadExchanges(); } else askTimer = setTimeout(pollRun, 1500);
+}
+
 // ---------------- refresh loop ----------------
 async function refresh() {
   if (tab === 'queries') await loadExchanges();
@@ -461,6 +527,7 @@ async function poll() {
     $('#stopBtn').classList.toggle('hidden', !s.capturing);
     $('#counts').textContent = `${s.exchanges} queries · ${s.flows} requests`;
     const key = s.last_flow + ':' + s.last_exchange;
+    if (s.capturing !== window._capt) { window._capt = s.capturing; loadAsk(); }
     if (key !== lastStatus) { lastStatus = key; await loadApps(); if ($('#auto').checked) await refresh(); }
   } catch (e) { $('#live').classList.remove('live'); $('#liveText').textContent = 'inspector not running'; }
 }

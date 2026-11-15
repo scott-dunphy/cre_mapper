@@ -50,7 +50,7 @@ APPS: list[App] = [
 
 
 def _load_local_apps() -> None:
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apps.local.json")
+    path = os.environ.get("AITI_APPS_FILE") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "apps.local.json")
     if not os.path.exists(path):
         return
     with open(path) as fh:

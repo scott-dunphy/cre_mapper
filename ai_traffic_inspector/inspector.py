@@ -157,6 +157,7 @@ def start(args) -> None:
     status = {"capturing": True, "proxy_port": args.port if not args.local else "local", "system_proxy": use_system_proxy}
     stopping = threading.Event()
     lock = threading.Lock()
+    asker = None
 
     def shutdown(*_):
         stopping.set()
@@ -164,6 +165,8 @@ def start(args) -> None:
             if not status["capturing"]:
                 return
             status["capturing"] = False
+            if asker is not None:
+                asker.close()  # its Chrome points at our proxy and would lose network once we stop
             if use_system_proxy:
                 restore_system_proxy()
             if proxy.poll() is None:
@@ -187,7 +190,13 @@ def start(args) -> None:
     else:
         print(f"• Local capture mode for processes: {args.local}")
 
-    dashboard.serve(db, args.ui_port, on_shutdown=shutdown, status=status)
+    asker = None
+    try:
+        import asker as asker_mod
+        asker = asker_mod.Asker(db, proxy_port=None if args.local else args.port, chrome_path=args.chrome)
+    except ImportError:
+        print("! 'Ask all' disabled: run  .venv/bin/pip install -r requirements.txt  to add Playwright.")
+    dashboard.serve(db, args.ui_port, on_shutdown=shutdown, status=status, asker=asker)
     url = f"http://127.0.0.1:{args.ui_port}"
     print(f"• Dashboard: {url}\n  Press Ctrl-C (or 'Stop capture' in the dashboard) to stop and restore settings.")
     if not args.no_browser:
@@ -234,6 +243,7 @@ def main() -> None:
     s.add_argument("--no-system-proxy", action="store_true", help="don't change macOS proxy settings")
     s.add_argument("--all-hosts", action="store_true", help="decrypt and record every host, not only AI apps")
     s.add_argument("--keep-ui", action="store_true", help="keep the dashboard running after capture stops")
+    s.add_argument("--chrome", help="path to the Google Chrome binary used by 'Ask all'")
     s.add_argument("--force", action="store_true", help="start even if the CA does not look trusted")
     s.set_defaults(fn=start)
 

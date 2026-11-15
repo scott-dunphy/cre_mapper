@@ -71,6 +71,7 @@ class Handler(BaseHTTPRequestHandler):
     db_path = store.DEFAULT_DB
     on_shutdown = None
     status = {}
+    asker = None
 
     def log_message(self, *a):
         pass
@@ -129,6 +130,18 @@ class Handler(BaseHTTPRequestHandler):
                 groups = [{**g, "apps": sorted(g["apps"])} for g in visibility.group_similar(rows) if len(g["ids"]) > 1]
                 groups.sort(key=lambda g: (-len(g["apps"]), -g["ts"]))
                 return self._send(200, groups)
+            if p == "/api/ask":
+                if not self.asker or not self.status.get("capturing"):
+                    return self._send(200, {"available": False, "reason": "Start capture to use Ask all."})
+                return self._send(200, {"available": True, **self.asker.info()})
+            m = re.fullmatch(r"/api/runs/(\d+)", p)
+            if m:
+                run = self.asker.runs.get(int(m[1])) if self.asker else None
+                if not run:
+                    return self._send(404, {"error": "not found"})
+                clean = {**run, "apps": {a: {k: v for k, v in st.items() if not k.startswith("_")}
+                                         for a, st in run["apps"].items()}}
+                return self._send(200, clean)
             if p == "/api/settings":
                 return self._send(200, {"my_domains": store.get_setting(con, "my_domains", []),
                                         "competitors": store.get_setting(con, "competitors", [])})
@@ -212,6 +225,16 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
             return self._send(400, {"error": "bad json"})
+        if p in ("/api/ask", "/api/ask/signin"):
+            if not self.asker or not self.status.get("capturing"):
+                return self._send(400, {"error": "Start capture to use Ask all."})
+            try:
+                if p == "/api/ask/signin":
+                    self.asker.open_signin(data.get("apps") or None)
+                    return self._send(200, {"ok": True})
+                return self._send(200, {"run_id": self.asker.start_run(str(data.get("prompt", "")), list(data.get("apps") or []))})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
         if p == "/api/settings":
             con = store.connect(self.db_path)
             store.set_setting(con, "my_domains", visibility.clean_domains(data.get("my_domains")))
@@ -249,10 +272,11 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not found"})
 
 
-def serve(db_path=store.DEFAULT_DB, port=8765, on_shutdown=None, status=None) -> ThreadingHTTPServer:
+def serve(db_path=store.DEFAULT_DB, port=8765, on_shutdown=None, status=None, asker=None) -> ThreadingHTTPServer:
     store.connect(db_path).close()
     Handler.db_path = db_path
     Handler.on_shutdown = on_shutdown
+    Handler.asker = asker
     Handler.status = status or {"capturing": False}
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()

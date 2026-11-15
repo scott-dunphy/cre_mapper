@@ -77,6 +77,33 @@ Other commands:
 Export: **Export sources CSV** gives one row per (query, cited URL) with rank, domain, title and
 the searches the model ran. You can open it in Excel to track which sites each AI cites.
 
+## Ask every app the same question
+
+At the top of the **Queries** tab, type a question, tick the apps and press **Ask all**.
+
+1. **First time only:** press **Open Chrome to sign in**. A separate Chrome window opens with a
+   tab for each app, using the inspector's own Chrome profile
+   (`~/.ai-traffic-inspector/chrome-profile`; your everyday Chrome profile isn't touched). Sign in
+   to each site, then quit that window (⌘Q). You stay signed in for later runs.
+2. **Ask all** opens that profile in a visible Chrome window. It starts a new chat in each app,
+   types the question and presses Enter, one site at a time. It then waits until the inspector
+   captures each answer. The status for each app reads *answered*, *sign in*, *needs you* (solve
+   the "verify you're human" check in the window and the run continues), *no text box* or
+   *no answer*.
+3. When it finishes, **Compare these answers** opens them side by side.
+
+Notes:
+- **Google Chrome must be installed**, or start with `--chrome /path/to/chrome`. Playwright
+  attaches to your real Chrome, so `playwright install` is never needed.
+- **The automation window has a debugging port on 127.0.0.1** so the inspector can control it.
+  It's closed, together with that Chrome window, when capture stops.
+- **For Claude to search the web,** turn on web search in Claude's settings.
+- **Website changes can break the automation.** If a site's layout changes and it can't find the
+  message box, update the selectors in `apps.local.json`:
+  `{"name": "ChatGPT", "hosts": ["chatgpt.com"], "chat": "...", "ask_url": "https://chatgpt.com/", "composer": ["#prompt-textarea"]}`
+- **Account risk:** automating consumer AI apps may be against their terms of service. Runs happen
+  only when you press the button, one at a time, with no scheduling.
+
 ## Making your sites more findable by AI (Visibility tab)
 
 1. **List your domains and competitors.** Subdomains count. The tool can only say "not cited"
@@ -154,6 +181,7 @@ with `untrust-ca` when you're done.
 | `inspector.py` | Launcher: certificate, system proxy on/off, starts mitmdump + dashboard |
 | `addon.py` | mitmproxy addon: stream copy, redaction, writes flows and parsed queries |
 | `visibility.py`, `audit.py`, `bots.py` | Citation share / missed queries, page audit, AI crawler table |
+| `asker.py` | “Ask all”: drives a visible Chrome window to send one question to every app |
 | `providers.py` | App/host table and parsers (Claude SSE, ChatGPT delta stream, Grok NDJSON, OpenAI API, generic) |
 | `store.py` | SQLite schema |
 | `dashboard.py`, `static/index.html` | Local web UI and JSON API |
