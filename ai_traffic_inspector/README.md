@@ -83,9 +83,10 @@ the searches the model ran. You can open it in Excel to track which sites each A
    for domains you name.
 2. **Citation share by app.** For each domain and app, the share of your captured questions
    whose sources include it, and its average position in the source list.
-3. **Cited by some apps but not others.** When one app cites your page for a question and another
-   doesn't, the content is the same, so the cause is usually that app's crawler access or index.
-   **Audit it** checks robots.txt for each app's crawlers.
+3. **Cited by some apps but not others.** One app cited your page for a question and another
+   didn't. The card shows the searches each app ran. Check the missing app's crawler access, and
+   compare its searches with your title and headings. **Audit it** runs that check using the
+   missing app's searches.
 4. **Searches the AIs ran when you weren't cited.** These are the literal web searches the models
    issued. Ranking for them is what gets a page pulled into an answer, so they're your content
    targets.
@@ -96,7 +97,10 @@ the searches the model ran. You can open it in Excel to track which sites each A
      answers. *Training* crawlers (GPTBot, ClaudeBot) don't, per the vendors' docs, so blocking
      only those isn't flagged as a problem. The table and its sources are in `bots.py`. xAI
      publishes no official crawler docs, so Grok's tokens are marked unverified and not scored.
-   - noindex / nosnippet tags, canonical, HTTP status and speed
+   - robots.txt read the way the standard (RFC 9309) says crawlers read it: a 4xx means no rules;
+     a 5xx or no answer means crawlers stop
+   - noindex / nosnippet tags, canonical, HTTP status and speed, and bot-protection challenge
+     pages (for example Cloudflare's "Just a moment")
    - **text visible without JavaScript.** AI fetchers generally don't run JavaScript, so a
      client-rendered page can look empty to them.
    - title, H1–H3, JSON-LD schema types, published/updated dates

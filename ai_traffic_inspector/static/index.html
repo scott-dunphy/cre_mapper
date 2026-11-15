@@ -378,7 +378,8 @@ async function loadVisibility() {
   $('#gaps').innerHTML = v.gaps.map((g, i) => `<div class="miss"><div class="trunc">${esc(g.prompt)}</div>
       <div class="small" style="margin-top:4px">Cited by ${g.cited_by.map(badge).join(' ')} · not by ${g.missed_by.map(badge).join(' ')}</div>
       <div class="small muted">Your cited page: <a href="${esc(g.my_url)}" target="_blank" rel="noreferrer">${esc(g.my_url)}</a> · <a class="link" data-gap="${i}">audit it</a></div>
-      <div class="small muted">Same page, different outcome → usually that app's crawler access or index, not the content. Check robots.txt for the missing app's bots.</div></div>`).join('')
+      ${Object.entries(g.apps).map(([a, c]) => `<div class="small" style="margin-top:4px">${badge(a)} searched: ${c.searches.map(q => `<span class="chip q">${esc(q)}</span>`).join(' ') || '<span class="muted">none seen</span>'}</div>`).join('')}
+      <div class="small muted" style="margin-top:4px">Check the missing app's crawler access (the audit's robots.txt table), and compare the searches it ran with your page's title and headings.</div></div>`).join('')
     || `<div class="body small muted">${v.mine.length ? 'No split results yet. Ask the same question in several apps.' : 'Add your domains first.'}</div>`;
   $('#missedSearches').innerHTML = v.missed_searches.length
     ? `<div class="chips">${v.missed_searches.map(([q, n]) => `<span class="chip q">${esc(q)}${n > 1 ? ' ×' + n : ''}</span>`).join('')}</div>
@@ -406,7 +407,7 @@ function prepAudit({url = '', compare = [], queries = []}) {
 document.addEventListener('click', e => {
   const t = e.target;
   if (t.dataset.miss != null) { const m = vis.missed[+t.dataset.miss]; prepAudit({compare: m.top_urls.slice(0, 3), queries: m.search_queries.length ? m.search_queries : [m.prompt]}); }
-  if (t.dataset.gap != null) { const g = vis.gaps[+t.dataset.gap]; prepAudit({url: g.my_url, queries: [g.prompt]}); runAudit(); }
+  if (t.dataset.gap != null) { const g = vis.gaps[+t.dataset.gap]; prepAudit({url: g.my_url, queries: g.missed_searches.length ? g.missed_searches : [g.prompt]}); runAudit(); }
   if (t.dataset.audit) { showTab('visibility'); prepAudit({compare: [t.dataset.audit]}); runAudit(); }
 });
 $('#auRun').onclick = () => runAudit();
@@ -423,7 +424,7 @@ function auditCard(a, label) {
     <div class="section">${(a.findings||[]).map(f => `<div class="finding"><span class="lvl ${f.level}">${f.level === 'block' ? 'blocks' : f.level}</span><b>${esc(f.area)}:</b> ${esc(f.message)}</div>`).join('')}</div>
     ${rb.length ? `<details><summary>AI crawler access in robots.txt (${esc(a.robots.state)})</summary><table class="small"><thead><tr><th>App</th><th>Crawler</th><th>Role</th><th>Allowed</th></tr></thead><tbody>
       ${a.robots.bots.map(b => `<tr><td>${badge(b.app)}</td><td>${esc(b.token)}${b.verified ? '' : ' <span class="muted">(unverified)</span>'}</td><td>${esc(b.role)}</td>
-      <td>${b.allowed ? '<span class="tick">yes</span>' : '<span class="lvl block">no</span>'}</td></tr>`).join('')}</tbody></table>
+      <td>${b.allowed == null ? '<span class="muted">unknown</span>' : b.allowed ? '<span class="tick">yes</span>' : '<span class="lvl block">no</span>'}</td></tr>`).join('')}</tbody></table>
       <div class="small muted">Roles: search = builds the app's search index; fetch = live fetch for a user's question; train = model training only. Sources are listed in bots.py.</div></details>` : ''}
     ${a.headings && a.headings.length ? `<details><summary>Headings</summary><pre>${esc(a.headings.map(([t, h]) => t.toUpperCase() + '  ' + h).join('\n'))}</pre></details>` : ''}
   </div></div>`;

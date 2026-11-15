@@ -101,18 +101,21 @@ def compute(exchanges: list[dict], mine: list[str], competitors: list[str]) -> d
     for g in group_similar(sorted(exchanges, key=lambda e: -e["ts"])):
         if len(g["apps"]) < 2 or not mine:
             continue
-        per_app = defaultdict(lambda: {"cited": False, "url": None, "rank": None, "ids": []})
+        per_app = defaultdict(lambda: {"cited": False, "url": None, "rank": None, "ids": [], "searches": []})
         for i in g["ids"]:
             e = by_id[i]
             cell = per_app[e["app"]]
             cell["ids"].append(i)
+            cell["searches"] += [q for q in e["search_queries"] if q not in cell["searches"]]
             for d, rank, url in my_hits.get(i, []):
                 if not cell["cited"] or rank < cell["rank"]:
                     cell.update(cited=True, url=url, rank=rank)
         states = {a: c["cited"] for a, c in per_app.items()}
         if any(states.values()) and not all(states.values()):
             my_url = next(c["url"] for c in per_app.values() if c["cited"])
+            missed_by = [a for a, v in states.items() if not v]
             gaps.append({"prompt": g["prompt"], "apps": dict(per_app), "my_url": my_url,
+                         "missed_searches": [q for a in missed_by for q in per_app[a]["searches"]],
                          "cited_by": sorted(a for a, v in states.items() if v),
                          "missed_by": sorted(a for a, v in states.items() if not v)})
 

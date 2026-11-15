@@ -13,7 +13,6 @@ import statistics
 import time
 import urllib.error
 import urllib.request
-import urllib.robotparser
 from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
@@ -158,29 +157,82 @@ def _coverage(query_terms: list[str], text: str) -> float | None:
     if not query_terms:
         return None
     hay = (text or "").lower()
-    return round(sum(1 for t in query_terms if t in hay) / len(query_terms), 2)
+    return round(sum(1 for t in query_terms if _has(t, hay)) / len(query_terms), 2)
+
+
+def _has(term: str, hay: str) -> bool:
+    return re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", hay) is not None
+
+
+class Robots:
+    """RFC 9309 robots.txt matching: exact product-token groups (else *), longest match wins, Allow wins ties."""
+
+    def __init__(self, text: str):
+        self.groups: list[tuple[list[str], list[tuple[bool, str]]]] = []
+        agents, rules, in_rules = [], [], False
+        for line in text.splitlines():
+            line = line.split("#", 1)[0].strip()
+            if ":" not in line:
+                continue
+            key, val = (x.strip() for x in line.split(":", 1))
+            key = key.lower()
+            if key == "user-agent":
+                if in_rules:
+                    self.groups.append((agents, rules))
+                    agents, rules, in_rules = [], [], False
+                agents.append(val.lower())
+            elif key in ("allow", "disallow") and agents:
+                in_rules = True
+                if val:
+                    rules.append((key == "allow", val))
+        if agents:
+            self.groups.append((agents, rules))
+
+    def rules_for(self, token: str):
+        token = token.lower()
+        exact = [r for a, rs in self.groups if token in a for r in rs]
+        if any(token in a for a, _ in self.groups):
+            return exact
+        return [r for a, rs in self.groups if "*" in a for r in rs]
+
+    @staticmethod
+    def _match(pattern: str, path: str) -> bool:
+        anchored = pattern.endswith("$")
+        rx = "".join(".*" if c == "*" else re.escape(c) for c in (pattern[:-1] if anchored else pattern))
+        return re.match(rx + ("$" if anchored else ""), path) is not None
+
+    def allowed(self, token: str, url: str) -> bool:
+        p = urlparse(url)
+        path = (p.path or "/") + (f"?{p.query}" if p.query else "")
+        if path == "/robots.txt":
+            return True
+        best = None  # (length, allow)
+        for allow, pattern in self.rules_for(token):
+            if self._match(pattern, path):
+                cand = (len(pattern), allow)
+                if best is None or cand[0] > best[0] or (cand[0] == best[0] and allow):
+                    best = cand
+        return True if best is None else best[1]
 
 
 def check_robots(url: str) -> dict:
     p = urlparse(url)
     robots_url = f"{p.scheme}://{p.netloc}/robots.txt"
     r = fetch(robots_url, max_bytes=500_000)
-    rp = urllib.robotparser.RobotFileParser()
-    if r["status"] in (401, 403):
-        state = "forbidden (treated as disallow all)"
-        rp.disallow_all = True
-    elif r["status"] >= 400 or r["status"] == 0:
-        state = f"not found ({r['status'] or r['error']}) — everything allowed"
-        rp.allow_all = True
+    code = r["status"]
+    if 200 <= code < 300:
+        state, robots = "found", Robots(r["body"])
+    elif 400 <= code < 500 and code != 429:
+        # RFC 9309: 4xx means "no robots.txt" -> crawlers may fetch everything.
+        state, robots = f"none (HTTP {code}) — crawlers treat this as no rules", Robots("")
     else:
-        state = "found"
-        rp.parse(r["body"].splitlines())
+        # RFC 9309: 5xx / 429 / unreachable -> crawlers assume complete disallow.
+        state, robots = f"unreachable ({code or r['error']}) — crawlers generally stop until it's fixed", None
     results = []
     for b in bots.as_dicts():
-        allowed = rp.can_fetch(b["token"], url)
-        results.append({**b, "allowed": allowed,
-                        "note": bots.ROLE_NOTES[b["role"]].format(app=b["app"])})
-    return {"url": robots_url, "state": state, "bots": results}
+        allowed = robots.allowed(b["token"], url) if robots else None
+        results.append({**b, "allowed": allowed, "note": bots.ROLE_NOTES[b["role"]].format(app=b["app"])})
+    return {"url": robots_url, "status": code, "state": state, "unreachable": robots is None, "bots": results}
 
 
 def audit_page(url: str, queries: list[str] | None = None, probe_bots: bool = True) -> dict:
@@ -207,6 +259,9 @@ def audit_page(url: str, queries: list[str] | None = None, probe_bots: bool = Tr
         except Exception:
             pass
     text = re.sub(r"\s+", " ", " ".join(parser.text)).strip()
+    challenge = (page["headers"].get("cf-mitigated", "").lower() == "challenge" or
+                 bool(re.search(r"just a moment|attention required|access denied|are you a robot|verify you are human",
+                                parser.title, re.I)) or "_cf_chl" in (page["body"] or "")[:20000])
     words = len(text.split())
     schema, schema_dates = _schema_types(parser.jsonld)
     meta_robots = " ".join(filter(None, [parser.meta.get("robots", ""), parser.meta.get("googlebot", ""),
@@ -229,9 +284,9 @@ def audit_page(url: str, queries: list[str] | None = None, probe_bots: bool = Tr
         "query_terms": q_terms,
         "coverage": {"title": _coverage(q_terms, parser.title), "headings": _coverage(q_terms, heading_text + " " + parser.title),
                      "body": _coverage(q_terms, text)},
-        "missing_terms": [t for t in q_terms if t not in (parser.title + " " + heading_text).lower()],
+        "missing_terms": [t for t in q_terms if not _has(t, (parser.title + " " + heading_text).lower())],
         "probes": [{"token": t, "status": r["status"], "bytes": len(r["body"]), "error": r["error"]} for t, r in probes.items()],
-        "excerpt": text[:600], "html_bytes": len(page["body"]),
+        "excerpt": text[:600], "html_bytes": len(page["body"]), "challenge": challenge,
     })
     out["findings"] = findings(out)
     return out
@@ -247,9 +302,20 @@ def findings(a: dict) -> list[dict]:
         add("block", "Fetch", f"Couldn't fetch the page: {a['error']}")
         return f
     if a["status"] >= 400:
-        add("block", "Fetch", f"The page returned HTTP {a['status']} to a normal browser request.")
+        add("block", "Fetch", f"The page returned HTTP {a['status']} to an automated request. If it opens in your browser, "
+                              "bot protection is blocking automated clients, which may include AI fetchers.")
+    if a.get("challenge"):
+        add("warn", "Bot protection", "The server answered with a bot-protection challenge page instead of the content. "
+                                      "AI fetchers that can't pass it see the challenge, not your page. Allow verified AI "
+                                      "crawlers in your CDN/WAF settings.")
+    if a["robots"].get("unreachable"):
+        add("warn", "robots.txt", f"robots.txt is {a['robots']['state']}. Per the robots.txt standard, crawlers treat this "
+                                  "as \u201cdon't crawl anything\u201d.")
+    elif a["robots"].get("status") in (401, 403):
+        add("info", "robots.txt", f"robots.txt returned HTTP {a['robots']['status']} to an automated request. Crawlers treat "
+                                  "that as no rules, but it may mean bot protection is also blocking real crawlers.")
     for b in a["robots"]["bots"]:
-        if b["allowed"]:
+        if b["allowed"] is not False:
             continue
         if not b["verified"]:
             add("info", "robots.txt", f"Disallows {b['token']} (an unverified {b['app']} token, so not scored).")
@@ -265,6 +331,8 @@ def findings(a: dict) -> list[dict]:
         add("warn", "Indexing", "nosnippet / max-snippet:0 limits the text search engines (including Google AI features) can quote.")
     if a["canonical"] and a["final_url"] and a["canonical"].rstrip("/") != a["final_url"].rstrip("/"):
         add("warn", "Indexing", f"Canonical points elsewhere ({a['canonical']}); crawlers may index that URL instead.")
+    if a.get("challenge") or a["status"] >= 400:
+        return _sorted(f)
     if a["js_shell"]:
         add("warn", "Content", f"Only {a['word_count']} word{'' if a['word_count'] == 1 else 's'} of text in the raw HTML and the page loads {a['scripts']} scripts. "
                                "AI retrieval fetchers generally don't run JavaScript, so they may see an almost empty page.")
@@ -291,6 +359,10 @@ def findings(a: dict) -> list[dict]:
                 "CDNs check real crawlers by IP, so this is only a hint that bots may be treated differently.")
     add("info", "llms.txt", ("Has /llms.txt." if a["llms_txt"] else "No /llms.txt.") +
         " (Low evidence that this affects AI answers either way.)")
+    return _sorted(f)
+
+
+def _sorted(f):
     order = {"block": 0, "warn": 1, "info": 2}
     return sorted(f, key=lambda x: order[x["level"]])
 

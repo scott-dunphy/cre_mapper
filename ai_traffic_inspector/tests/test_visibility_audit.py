@@ -127,3 +127,68 @@ def test_visibility_math():
 
 def test_clean_domains():
     assert visibility.clean_domains(["https://www.MySite.com/page", "", "x", "mysite.com"]) == ["mysite.com"]
+
+
+def test_rfc9309_matching():
+    r = audit.Robots("User-agent: *\nDisallow: /\nAllow: /blog/\n")
+    assert r.allowed("X", "http://a/blog/x") and not r.allowed("X", "http://a/other")
+    r = audit.Robots("User-agent: *\nDisallow: /*.pdf$\n")
+    assert not r.allowed("X", "http://a/f.pdf") and r.allowed("X", "http://a/f.pdf?x=1") and r.allowed("X", "http://a/f.html")
+    r = audit.Robots("User-agent: *\nDisallow: /page\nAllow: /page\n")   # tie -> allow
+    assert r.allowed("X", "http://a/page")
+    r = audit.Robots("User-agent: Claude\nDisallow: /\n")                 # exact token only
+    assert r.allowed("Claude-SearchBot", "http://a/x")
+    r = audit.Robots("User-agent: GPTBot\nUser-agent: ClaudeBot\nDisallow: /\n\nUser-agent: *\nDisallow: /tmp/\n"
+                     "User-agent: gptbot\nAllow: /public/\n")             # merged duplicate groups, case-insensitive
+    assert not r.allowed("ClaudeBot", "http://a/x") and r.allowed("GPTBot", "http://a/public/a")
+    assert r.allowed("OAI-SearchBot", "http://a/x") and not r.allowed("OAI-SearchBot", "http://a/tmp/y")
+
+
+class Odd(BaseHTTPRequestHandler):
+    robots_status = 200
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        if self.path == "/robots.txt":
+            self.send_response(type(self).robots_status)
+            self.end_headers()
+            self.wfile.write(b"User-agent: *\nDisallow: /\n")
+            return
+        self.send_response(403)
+        self.send_header("cf-mitigated", "challenge")
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"<html><head><title>Just a moment...</title></head><body>checking</body></html>")
+
+
+@pytest.mark.parametrize("code,expect", [(403, True), (503, None)])
+def test_robots_status_codes(code, expect):
+    handler = type("H", (Odd,), {"robots_status": code})
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        a = audit.audit_page(f"http://127.0.0.1:{srv.server_address[1]}/p", [], probe_bots=False)
+    finally:
+        srv.shutdown()
+    assert _bot(a, "OAI-SearchBot")["allowed"] is expect
+    assert a["challenge"] is True
+    areas = {(f["level"], f["area"]) for f in a["findings"]}
+    assert ("warn", "Bot protection") in areas
+    assert not any(f["area"] == "Content" for f in a["findings"])   # don't audit the challenge page's content
+    assert not any(f["area"] == "robots.txt" and f["level"] == "block" for f in a["findings"])
+    if code == 503:
+        assert ("warn", "robots.txt") in areas
+
+
+def test_gap_carries_missing_apps_searches():
+    exs = [ex(1, "Claude", "q", ["mysite.com"], ["a"]), ex(2, "ChatGPT", "q", ["x.com"], ["b", "c"])]
+    gap = visibility.compute(exs, ["mysite.com"], [])["gaps"][0]
+    assert gap["missed_searches"] == ["b", "c"]
+    assert gap["apps"]["Claude"]["searches"] == ["a"]
+
+
+def test_term_coverage_word_boundaries():
+    assert audit._coverage(["rate"], "corporate offices") == 0.0
+    assert audit._coverage(["rate"], "the vacancy rate rose") == 1.0
