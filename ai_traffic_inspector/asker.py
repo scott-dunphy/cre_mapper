@@ -229,6 +229,12 @@ class Asker:
                 st.update(status="error", detail="Chrome couldn't be started")
             run["done"], self._busy = True, False
             return
+        for old in list(ctx.pages):  # tidy up tabs from the previous run
+            if old.url != "about:blank" or len(ctx.pages) > 1:
+                try:
+                    await old.close()
+                except Exception:
+                    pass
         try:
             for app, st in run["apps"].items():  # type into one site at a time
                 await self._send(ctx, app, st, run["prompt"])

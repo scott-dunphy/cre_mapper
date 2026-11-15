@@ -131,16 +131,19 @@ class Handler(BaseHTTPRequestHandler):
                 groups.sort(key=lambda g: (-len(g["apps"]), -g["ts"]))
                 return self._send(200, groups)
             if p == "/api/ask":
-                if not self.asker or not self.status.get("capturing"):
+                if not self.status.get("capturing"):
                     return self._send(200, {"available": False, "reason": "Start capture to use Ask all."})
+                if not self.asker:
+                    return self._send(200, {"available": False, "reason": "Ask all needs Playwright: run ./setup_mac.sh "
+                                                                          "again (or .venv/bin/pip install -r requirements.txt), then restart."})
                 return self._send(200, {"available": True, **self.asker.info()})
             m = re.fullmatch(r"/api/runs/(\d+)", p)
             if m:
                 run = self.asker.runs.get(int(m[1])) if self.asker else None
                 if not run:
                     return self._send(404, {"error": "not found"})
-                clean = {**run, "apps": {a: {k: v for k, v in st.items() if not k.startswith("_")}
-                                         for a, st in run["apps"].items()}}
+                clean = {**run, "apps": {a: {k: v for k, v in dict(st).items() if not k.startswith("_")}
+                                         for a, st in dict(run["apps"]).items()}}
                 return self._send(200, clean)
             if p == "/api/settings":
                 return self._send(200, {"my_domains": store.get_setting(con, "my_domains", []),

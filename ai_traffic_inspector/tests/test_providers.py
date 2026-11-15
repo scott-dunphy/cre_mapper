@@ -102,3 +102,21 @@ def test_generic_meta_graphql_form():
 def test_own_domains_excluded():
     srcs = P.extract_sources([{"a": "see https://claude.ai/chat/1 and https://cdn.oaistatic.com/x.png and https://example.org/page."}])
     assert [s["url"] for s in srcs] == ["https://example.org/page"]
+
+
+def test_local_override_keeps_capture(tmp_path):
+    import importlib
+    f = tmp_path / "apps.json"
+    f.write_text(json.dumps([{"name": "ChatGPT", "ask_url": "https://chatgpt.com/x", "composer": ["#new"]},
+                             {"name": "AskOnly", "ask_url": "https://a.example/"}]))
+    os.environ["AITI_APPS_FILE"] = str(f)
+    try:
+        prov = importlib.reload(P)
+        app = prov.identify_app("chatgpt.com")
+        assert app.parser == "chatgpt" and app.is_chat("/backend-api/f/conversation") and not app.is_chat("/backend-api/me")
+        assert not any(a.name == "AskOnly" for a in prov.APPS)
+        import asker
+        assert asker._local_overrides({})["ChatGPT"]["composer"] == ["#new"]
+    finally:
+        del os.environ["AITI_APPS_FILE"]
+        importlib.reload(P)

@@ -9,6 +9,8 @@ To add or override an app without editing this file, create
 `apps.local.json` next to it:
 
     [{"name": "MyBot", "hosts": ["mybot.ai"], "chat": "/api/chat$", "parser": "generic"}]
+
+Entries for an existing app only change the fields they give (e.g. just "ask_url"/"composer").
 """
 from __future__ import annotations
 
@@ -49,15 +51,26 @@ APPS: list[App] = [
 ]
 
 
-def _load_local_apps() -> None:
-    path = os.environ.get("AITI_APPS_FILE") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "apps.local.json")
+def _load_local_apps(path: str | None = None) -> None:
+    """Merge apps.local.json into APPS. Entries for an existing app only update the fields they give;
+    entries without "hosts" for a new app are Ask-all-only and are skipped here."""
+    path = path or os.environ.get("AITI_APPS_FILE") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "apps.local.json")
     if not os.path.exists(path):
         return
     with open(path) as fh:
-        for spec in json.load(fh):
-            app = App(spec["name"], tuple(spec["hosts"]), spec.get("chat", r"^$"), spec.get("parser", "generic"))
-            APPS[:] = [a for a in APPS if a.name != app.name]
-            APPS.insert(0, app)
+        specs = json.load(fh)
+    for spec in specs:
+        name = spec.get("name")
+        existing = next((a for a in APPS if a.name == name), None)
+        if existing:
+            if spec.get("hosts"):
+                existing.hosts = tuple(spec["hosts"])
+            if spec.get("chat"):
+                existing.chat = spec["chat"]
+            if spec.get("parser"):
+                existing.parser = spec["parser"]
+        elif name and spec.get("hosts"):
+            APPS.insert(0, App(name, tuple(spec["hosts"]), spec.get("chat", r"^$"), spec.get("parser", "generic")))
 
 
 _load_local_apps()

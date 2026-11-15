@@ -100,7 +100,8 @@ Notes:
 - **For Claude to search the web,** turn on web search in Claude's settings.
 - **Website changes can break the automation.** If a site's layout changes and it can't find the
   message box, update the selectors in `apps.local.json`:
-  `{"name": "ChatGPT", "hosts": ["chatgpt.com"], "chat": "...", "ask_url": "https://chatgpt.com/", "composer": ["#prompt-textarea"]}`
+  `[{"name": "ChatGPT", "ask_url": "https://chatgpt.com/", "composer": ["#prompt-textarea"]}]`
+  (an entry for an existing app changes only the fields you give)
 - **Account risk:** automating consumer AI apps may be against their terms of service. Runs happen
   only when you press the button, one at a time, with no scheduling.
 
