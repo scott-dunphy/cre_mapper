@@ -78,6 +78,19 @@ pre { white-space: pre-wrap; word-break: break-word; font: 12.5px/1.5 var(--mono
 .kv div:nth-child(even) { word-break: break-all; }
 details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin: 6px 0; }
 .hidden { display: none !important; }
+textarea { font: 12.5px/1.5 var(--mono); width: 100%; min-height: 70px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); resize: vertical; }
+input[type=url], input[type=text] { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); width: 100%; }
+.chip.mine { background: var(--hit-soft); color: var(--hit); font-weight: 600; }
+.chip.comp { background: #fde7e4; color: #b42318; }
+@media (prefers-color-scheme: dark) { .chip.comp { background: #3d1d1a; color: #f97066; } }
+.lvl { display: inline-block; min-width: 46px; text-align: center; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; margin-right: 6px; }
+.lvl.block { background: #fde7e4; color: #b42318; } .lvl.warn { background: #fff4e5; color: var(--warn); } .lvl.info { background: var(--accent-soft); color: var(--accent); }
+@media (prefers-color-scheme: dark) { .lvl.block { background: #3d1d1a; color: #f97066; } .lvl.warn { background: #3a2a14; } }
+.finding { padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+.miss { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.share { font-variant-numeric: tabular-nums; font-weight: 600; }
+.diff li { margin-bottom: 4px; }
+a.link { color: var(--accent); cursor: pointer; text-decoration: none; }
 </style>
 </head>
 <body>
@@ -86,6 +99,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin:
   <nav>
     <button data-tab="queries" class="on">Queries</button>
     <button data-tab="compare">Compare</button>
+    <button data-tab="visibility">Visibility</button>
     <button data-tab="traffic">Traffic</button>
   </nav>
   <div class="status">
@@ -129,6 +143,35 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin:
     </div>
   </section>
 
+  <!-- VISIBILITY -->
+  <section id="tab-visibility" class="hidden">
+    <div class="split" style="grid-template-columns: minmax(0,1fr) minmax(0,1fr)">
+      <div>
+        <div class="card section"><h3>Your sites and competitors</h3><div class="body">
+          <div class="split" style="grid-template-columns: 1fr 1fr; gap: 10px">
+            <div><div class="label small muted">MY SITES (one domain per line)</div><textarea id="myDomains" placeholder="mysite.com"></textarea></div>
+            <div><div class="label small muted">COMPETITORS</div><textarea id="compDomains" placeholder="competitor.com"></textarea></div>
+          </div>
+          <div style="margin-top:8px"><button class="btn primary" id="saveDomains">Save</button> <span class="small muted">Subdomains count too. “Not cited” can only be reported for domains you list here.</span></div>
+        </div></div>
+        <div class="card section"><h3>Citation share by app</h3><div class="body" id="board"></div></div>
+        <div class="card section"><h3>Same question, cited by some apps but not others</h3><div id="gaps"></div></div>
+        <div class="card section"><h3>Searches the AIs ran when you weren't cited</h3><div class="body" id="missedSearches"></div></div>
+      </div>
+      <div>
+        <div class="card section"><h3>Page audit</h3><div class="body">
+          <div class="small muted" style="margin-bottom:8px">Fetches pages from this Mac and reports what an AI search crawler would find: robots.txt rules per AI crawler, indexing tags, text visible without JavaScript, headings, structured data, dates, and how well the page matches the searches the AI ran.</div>
+          <div class="section"><div class="label small muted">YOUR PAGE (optional)</div><input type="url" id="auUrl" placeholder="https://mysite.com/page"></div>
+          <div class="section"><div class="label small muted">PAGES THE AI CITED, TO COMPARE AGAINST (one per line, up to 5)</div><textarea id="auCompare"></textarea></div>
+          <div class="section"><div class="label small muted">THE AI'S SEARCHES / QUESTION (one per line)</div><textarea id="auQueries"></textarea></div>
+          <button class="btn primary" id="auRun">Run audit</button> <span id="auBusy" class="small muted"></span>
+        </div></div>
+        <div id="auResult"></div>
+        <div class="card section"><h3>Queries where you weren't cited</h3><div id="missed" class="scroll" style="max-height:600px"></div></div>
+      </div>
+    </div>
+  </section>
+
   <!-- TRAFFIC -->
   <section id="tab-traffic" class="hidden">
     <div class="toolbar">
@@ -169,7 +212,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => showTab(b
 function showTab(t) {
   tab = t;
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  ['queries','compare','traffic'].forEach(x => $('#tab-' + x).classList.toggle('hidden', x !== t));
+  ['queries','compare','visibility','traffic'].forEach(x => $('#tab-' + x).classList.toggle('hidden', x !== t));
   refresh();
 }
 
@@ -212,7 +255,7 @@ $('#stopBtn').onclick = async () => { if (confirm('Stop capturing and restore th
 function sourcesHtml(sources) {
   if (!sources.length) return '<div class="muted small">No URLs in the response.</div>';
   return sources.map((s, i) => `<div class="src"><span class="muted small">${i+1}.</span> <span class="dom">${esc(s.domain)}</span>
-    ${s.title ? `<div class="small">${esc(s.title)}</div>` : ''}<div class="small"><a href="${esc(s.url)}" target="_blank" rel="noreferrer">${esc(s.url)}</a></div></div>`).join('');
+    ${s.title ? `<div class="small">${esc(s.title)}</div>` : ''}<div class="small"><a href="${esc(s.url)}" target="_blank" rel="noreferrer">${esc(s.url)}</a> · <a class="link" data-audit="${esc(s.url)}">audit</a></div></div>`).join('');
 }
 async function openExchange(id) {
   curEx = id;
@@ -311,10 +354,102 @@ async function openFlow(id) {
   </div>`;
 }
 
+
+// ---------------- Visibility ----------------
+let vis = null;
+const pct = v => v == null ? '–' : Math.round(v * 100) + '%';
+async function loadVisibility() {
+  const st = await api('/api/settings');
+  if (document.activeElement !== $('#myDomains') && document.activeElement !== $('#compDomains')) {
+    $('#myDomains').value = st.my_domains.join('\n'); $('#compDomains').value = st.competitors.join('\n');
+  }
+  vis = await api('/api/visibility');
+  const v = vis;
+  if (!v.board.length) {
+    $('#board').innerHTML = '<div class="muted small">Add your domains (and competitors) above to see how often each AI cites them.</div>';
+  } else {
+    $('#board').innerHTML = `<table><thead><tr><th>Domain</th>${v.apps.map(a => `<th class="heat">${badge(a)}</th>`).join('')}</tr></thead><tbody>
+      ${v.board.map(r => `<tr><td><span class="chip ${r.kind === 'mine' ? 'mine' : 'comp'}">${esc(r.domain)}</span></td>
+        ${v.apps.map(a => { const c = r.cells[a]; return c.share == null ? '<td class="heat muted">–</td>' :
+          `<td class="heat" style="background:color-mix(in srgb, var(${r.kind === 'mine' ? '--hit' : '--c-other'}) ${Math.round((c.share||0)*50)}%, transparent)">
+            <span class="share">${pct(c.share)}</span><div class="small muted">${c.cited}/${c.total}${c.avg_rank ? ' · rank ' + c.avg_rank : ''}</div></td>`; }).join('')}</tr>`).join('')}
+      </tbody></table><div class="small muted" style="margin-top:6px">Share of captured queries in each app whose sources include the domain; rank is its average position in the source list.</div>`;
+  }
+  $('#gaps').innerHTML = v.gaps.map((g, i) => `<div class="miss"><div class="trunc">${esc(g.prompt)}</div>
+      <div class="small" style="margin-top:4px">Cited by ${g.cited_by.map(badge).join(' ')} · not by ${g.missed_by.map(badge).join(' ')}</div>
+      <div class="small muted">Your cited page: <a href="${esc(g.my_url)}" target="_blank" rel="noreferrer">${esc(g.my_url)}</a> · <a class="link" data-gap="${i}">audit it</a></div>
+      <div class="small muted">Same page, different outcome → usually that app's crawler access or index, not the content. Check robots.txt for the missing app's bots.</div></div>`).join('')
+    || `<div class="body small muted">${v.mine.length ? 'No split results yet. Ask the same question in several apps.' : 'Add your domains first.'}</div>`;
+  $('#missedSearches').innerHTML = v.missed_searches.length
+    ? `<div class="chips">${v.missed_searches.map(([q, n]) => `<span class="chip q">${esc(q)}${n > 1 ? ' ×' + n : ''}</span>`).join('')}</div>
+       <div class="small muted" style="margin-top:8px">These are the literal searches the AIs ran. Pages that rank for them are the ones that get pulled in.
+       Common terms: ${v.missed_terms.slice(0, 20).map(([t, n]) => esc(t) + ' (' + n + ')').join(', ')}</div>`
+    : '<div class="muted small">None yet' + (v.mine.length ? '.' : ' — add your domains first.') + '</div>';
+  $('#missed').innerHTML = v.missed.map((m, i) => `<div class="miss">
+      <div>${badge(m.app)} <span class="small muted">${day(m.ts)} ${time(m.ts)}</span></div>
+      <div class="trunc" style="margin:4px 0">${esc(m.prompt)}</div>
+      ${m.no_sources ? '<div class="small muted">Answered without web sources (from the model\'s own knowledge).</div>' : ''}
+      ${m.search_queries.length ? `<div class="chips" style="margin-bottom:4px">${m.search_queries.map(q => `<span class="chip q">${esc(q)}</span>`).join('')}</div>` : ''}
+      <div class="chips">${m.cited.map(c => `<span class="chip ${c.competitor ? 'comp' : ''}">${esc(c.domain)}</span>`).join('')}</div>
+      ${m.top_urls.length ? `<div style="margin-top:6px"><a class="link small" data-miss="${i}">Compare my page with what was cited →</a></div>` : ''}
+    </div>`).join('') || `<div class="body small muted">${v.mine.length ? 'Your sites were cited in every captured query.' : 'Add your domains to see the queries where they were missed.'}</div>`;
+}
+$('#saveDomains').onclick = async () => {
+  await fetch('/api/settings', {method: 'POST', headers: {'X-AITI': '1', 'Content-Type': 'application/json'},
+    body: JSON.stringify({my_domains: $('#myDomains').value.split(/\s+/), competitors: $('#compDomains').value.split(/\s+/)})});
+  loadVisibility();
+};
+function prepAudit({url = '', compare = [], queries = []}) {
+  $('#auUrl').value = url; $('#auCompare').value = compare.join('\n'); $('#auQueries').value = queries.join('\n');
+  $('#auUrl').scrollIntoView({behavior: 'smooth', block: 'center'}); if (!url) $('#auUrl').focus();
+}
+document.addEventListener('click', e => {
+  const t = e.target;
+  if (t.dataset.miss != null) { const m = vis.missed[+t.dataset.miss]; prepAudit({compare: m.top_urls.slice(0, 3), queries: m.search_queries.length ? m.search_queries : [m.prompt]}); }
+  if (t.dataset.gap != null) { const g = vis.gaps[+t.dataset.gap]; prepAudit({url: g.my_url, queries: [g.prompt]}); runAudit(); }
+  if (t.dataset.audit) { showTab('visibility'); prepAudit({compare: [t.dataset.audit]}); runAudit(); }
+});
+$('#auRun').onclick = () => runAudit();
+
+function auditCard(a, label) {
+  if (!a) return '';
+  const rb = a.robots.bots.filter(b => b.verified);
+  return `<div class="card section"><h3>${label}</h3><div class="body">
+    <div class="small" style="word-break:break-all"><a href="${esc(a.final_url)}" target="_blank" rel="noreferrer">${esc(a.final_url)}</a></div>
+    <div class="stat small section" style="margin-top:6px"><span>HTTP <b>${a.status || 'ERR'}</b></span><span><b>${a.elapsed}s</b></span><span><b>${(a.word_count||0).toLocaleString()}</b> words in HTML</span>
+      <span><b>${(a.headings||[]).length}</b> headings</span><span>schema: <b>${esc((a.schema_types||[]).join(', ') || 'none')}</b></span>
+      ${a.coverage && a.coverage.headings != null ? `<span>search terms in title/headings <b>${pct(a.coverage.headings)}</b>, body <b>${pct(a.coverage.body)}</b></span>` : ''}</div>
+    ${a.title ? `<div class="small section"><b>Title:</b> ${esc(a.title)}${a.h1 && a.h1.length ? `<br><b>H1:</b> ${esc(a.h1[0])}` : ''}</div>` : ''}
+    <div class="section">${(a.findings||[]).map(f => `<div class="finding"><span class="lvl ${f.level}">${f.level === 'block' ? 'blocks' : f.level}</span><b>${esc(f.area)}:</b> ${esc(f.message)}</div>`).join('')}</div>
+    ${rb.length ? `<details><summary>AI crawler access in robots.txt (${esc(a.robots.state)})</summary><table class="small"><thead><tr><th>App</th><th>Crawler</th><th>Role</th><th>Allowed</th></tr></thead><tbody>
+      ${a.robots.bots.map(b => `<tr><td>${badge(b.app)}</td><td>${esc(b.token)}${b.verified ? '' : ' <span class="muted">(unverified)</span>'}</td><td>${esc(b.role)}</td>
+      <td>${b.allowed ? '<span class="tick">yes</span>' : '<span class="lvl block">no</span>'}</td></tr>`).join('')}</tbody></table>
+      <div class="small muted">Roles: search = builds the app's search index; fetch = live fetch for a user's question; train = model training only. Sources are listed in bots.py.</div></details>` : ''}
+    ${a.headings && a.headings.length ? `<details><summary>Headings</summary><pre>${esc(a.headings.map(([t, h]) => t.toUpperCase() + '  ' + h).join('\n'))}</pre></details>` : ''}
+  </div></div>`;
+}
+async function runAudit() {
+  const body = {url: $('#auUrl').value.trim(), compare: $('#auCompare').value.split(/\s+/).filter(Boolean),
+                queries: $('#auQueries').value.split('\n').map(x => x.trim()).filter(Boolean)};
+  if (!body.url && !body.compare.length) { $('#auBusy').textContent = 'Enter a URL first.'; return; }
+  $('#auRun').disabled = true; $('#auBusy').textContent = 'Fetching pages…';
+  try {
+    const r = await (await fetch('/api/audit', {method: 'POST', headers: {'X-AITI': '1', 'Content-Type': 'application/json'}, body: JSON.stringify(body)})).json();
+    if (r.error) throw new Error(r.error);
+    $('#auResult').innerHTML =
+      (r.differences.length ? `<div class="card section"><h3>Your page vs the cited pages</h3><div class="body"><ul class="diff">${r.differences.map(d => `<li>${esc(d)}</li>`).join('')}</ul>
+        <div class="small muted">These are observed differences, not proof of why the AI chose those pages.</div></div></div>` : '')
+      + auditCard(r.mine, 'Your page') + r.others.map((o, i) => auditCard(o, 'Cited page ' + (i + 1))).join('');
+    $('#auBusy').textContent = '';
+  } catch (e) { $('#auBusy').textContent = 'Audit failed: ' + e.message; }
+  $('#auRun').disabled = false;
+}
+
 // ---------------- refresh loop ----------------
 async function refresh() {
   if (tab === 'queries') await loadExchanges();
   else if (tab === 'compare') await loadGroups();
+  else if (tab === 'visibility') await loadVisibility();
   else await loadTraffic();
 }
 async function poll() {

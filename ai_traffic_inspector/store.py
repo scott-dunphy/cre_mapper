@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS exchanges (
     ttft REAL, duration REAL, parser TEXT
 );
 CREATE INDEX IF NOT EXISTS exchanges_ts ON exchanges(ts);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS audits (id INTEGER PRIMARY KEY, ts REAL, url TEXT, result TEXT);
 """
 
 REDACT = {"authorization", "cookie", "set-cookie", "x-api-key", "proxy-authorization", "openai-sentinel-token",
@@ -64,3 +66,13 @@ def insert_exchange(con, flow_id: int, ts: float, app: str, client: str, ttft, d
          len(sources), len({s["domain"] for s in sources}), ttft, duration, analysis["parser"]))
     con.commit()
     return cur.lastrowid
+
+
+def get_setting(con, key, default=None):
+    row = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return json.loads(row[0]) if row else default
+
+
+def set_setting(con, key, value) -> None:
+    con.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, json.dumps(value)))
+    con.commit()

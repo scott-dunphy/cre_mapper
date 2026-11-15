@@ -77,6 +77,40 @@ Other commands:
 Export: **Export sources CSV** gives one row per (query, cited URL) with rank, domain, title and
 the searches the model ran. You can open it in Excel to track which sites each AI cites.
 
+## Making your sites more findable by AI (Visibility tab)
+
+1. **List your domains and competitors.** Subdomains count. The tool can only say "not cited"
+   for domains you name.
+2. **Citation share by app.** For each domain and app, the share of your captured questions
+   whose sources include it, and its average position in the source list.
+3. **Cited by some apps but not others.** When one app cites your page for a question and another
+   doesn't, the content is the same, so the cause is usually that app's crawler access or index.
+   **Audit it** checks robots.txt for each app's crawlers.
+4. **Searches the AIs ran when you weren't cited.** These are the literal web searches the models
+   issued. Ranking for them is what gets a page pulled into an answer, so they're your content
+   targets.
+5. **Page audit.** Enter your page, the pages the AI cited instead, and the AI's searches. It
+   fetches each page from your Mac (not through the capture proxy) and reports:
+   - **robots.txt rules for each AI crawler, split by role.** *Search* crawlers (OAI-SearchBot,
+     Claude-SearchBot, PerplexityBot…) and *user-fetch* agents decide whether you can appear in
+     answers. *Training* crawlers (GPTBot, ClaudeBot) don't, per the vendors' docs, so blocking
+     only those isn't flagged as a problem. The table and its sources are in `bots.py`. xAI
+     publishes no official crawler docs, so Grok's tokens are marked unverified and not scored.
+   - noindex / nosnippet tags, canonical, HTTP status and speed
+   - **text visible without JavaScript.** AI fetchers generally don't run JavaScript, so a
+     client-rendered page can look empty to them.
+   - title, H1–H3, JSON-LD schema types, published/updated dates
+   - how many of the AI's search terms appear in your title, headings and body
+   - an *indicative* fetch using AI-bot user-agents. CDNs verify real crawlers by IP, so a
+     different response is only a hint.
+   - /llms.txt presence, reported as low evidence
+
+   It then lists **observed differences** between your page and the cited ones (word count,
+   schema, dates, search-term coverage, JavaScript dependence). These are differences, not proof
+   of why a model chose a page.
+
+From the Queries tab, every source has an **audit** link.
+
 ## What it can and can't see
 
 - **Browser versions work best.** claude.ai, chatgpt.com, grok.com and meta.ai in Chrome, Safari,
@@ -115,6 +149,7 @@ with `untrust-ca` when you're done.
 |---|---|
 | `inspector.py` | Launcher: certificate, system proxy on/off, starts mitmdump + dashboard |
 | `addon.py` | mitmproxy addon: stream copy, redaction, writes flows and parsed queries |
+| `visibility.py`, `audit.py`, `bots.py` | Citation share / missed queries, page audit, AI crawler table |
 | `providers.py` | App/host table and parsers (Claude SSE, ChatGPT delta stream, Grok NDJSON, OpenAI API, generic) |
 | `store.py` | SQLite schema |
 | `dashboard.py`, `static/index.html` | Local web UI and JSON API |

@@ -8,12 +8,13 @@ import os
 import re
 import sys
 import threading
-from difflib import SequenceMatcher
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import store  # noqa: E402
+import visibility  # noqa: E402
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -39,27 +40,6 @@ def _body_text(blob, ct: str):
         except ValueError:
             pass
     return text
-
-
-def group_similar(rows, threshold=0.85):
-    """Cluster exchanges whose prompts are the same or nearly the same."""
-    groups: list[dict] = []
-    for r in rows:
-        norm = r["prompt_norm"] or ""
-        if not norm:
-            continue
-        for g in groups:
-            sm = SequenceMatcher(None, g["key"], norm)
-            if g["key"] == norm or (sm.real_quick_ratio() >= threshold and sm.quick_ratio() >= threshold
-                                    and sm.ratio() >= threshold):
-                g["ids"].append(r["id"])
-                g["apps"].add(r["app"])
-                break
-        else:
-            groups.append({"key": norm, "prompt": r["prompt"], "ids": [r["id"]], "apps": {r["app"]}, "ts": r["ts"]})
-    out = [{**g, "apps": sorted(g["apps"])} for g in groups if len(g["ids"]) > 1]
-    out.sort(key=lambda g: (-len(g["apps"]), -g["ts"]))
-    return out
 
 
 def compare(con, ids: list[int]) -> dict:
@@ -146,7 +126,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, _exchange(row, True)) if row else self._send(404, {"error": "not found"})
             if p == "/api/groups":
                 rows = con.execute("SELECT id, ts, app, prompt, prompt_norm FROM exchanges ORDER BY ts DESC LIMIT 600").fetchall()
-                return self._send(200, group_similar(rows))
+                groups = [{**g, "apps": sorted(g["apps"])} for g in visibility.group_similar(rows) if len(g["ids"]) > 1]
+                groups.sort(key=lambda g: (-len(g["apps"]), -g["ts"]))
+                return self._send(200, groups)
+            if p == "/api/settings":
+                return self._send(200, {"my_domains": store.get_setting(con, "my_domains", []),
+                                        "competitors": store.get_setting(con, "competitors", [])})
+            if p == "/api/visibility":
+                exs = [_exchange(r, True) for r in con.execute(
+                    "SELECT * FROM exchanges ORDER BY ts DESC LIMIT ?", (int(q.get("limit", 2000)),))]
+                if q.get("app"):
+                    exs = [e for e in exs if e["app"] == q["app"]]
+                return self._send(200, visibility.compute(exs, store.get_setting(con, "my_domains", []),
+                                                          store.get_setting(con, "competitors", [])))
+            if p == "/api/audits":
+                rows = con.execute("SELECT id, ts, url FROM audits ORDER BY id DESC LIMIT 30").fetchall()
+                return self._send(200, [dict(r) for r in rows])
+            m = re.fullmatch(r"/api/audits/(\d+)", p)
+            if m:
+                r = con.execute("SELECT result FROM audits WHERE id=?", (int(m[1]),)).fetchone()
+                return self._send(200, json.loads(r[0])) if r else self._send(404, {"error": "not found"})
             if p == "/api/compare":
                 ids = [int(x) for x in q.get("ids", "").split(",") if x.strip().isdigit()]
                 return self._send(200, compare(con, ids))
@@ -206,6 +205,36 @@ class Handler(BaseHTTPRequestHandler):
         if not self._local_only() or self.headers.get("X-AITI") != "1":
             return self._send(403, {"error": "forbidden"})
         p = urlparse(self.path).path
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > 100_000:
+            return self._send(413, {"error": "too large"})
+        try:
+            data = json.loads(self.rfile.read(length) or b"{}")
+        except ValueError:
+            return self._send(400, {"error": "bad json"})
+        if p == "/api/settings":
+            con = store.connect(self.db_path)
+            store.set_setting(con, "my_domains", visibility.clean_domains(data.get("my_domains")))
+            store.set_setting(con, "competitors", visibility.clean_domains(data.get("competitors")))
+            con.close()
+            return self._send(200, {"ok": True})
+        if p == "/api/audit":
+            import audit
+            url = (data.get("url") or "").strip() or None
+            compare_urls = [u.strip() for u in data.get("compare") or [] if isinstance(u, str) and u.strip()]
+            if not url and not compare_urls:
+                return self._send(400, {"error": "give a URL to audit"})
+            try:
+                result = audit.run_audit(url, [str(x) for x in data.get("queries") or []][:20], compare_urls)
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            con = store.connect(self.db_path)
+            cur = con.execute("INSERT INTO audits (ts, url, result) VALUES (?,?,?)",
+                              (time.time(), url or compare_urls[0], json.dumps(result)))
+            con.commit()
+            con.close()
+            result["id"] = cur.lastrowid
+            return self._send(200, result)
         if p == "/api/clear":
             con = store.connect(self.db_path)
             con.execute("DELETE FROM exchanges")
